@@ -1,6 +1,4 @@
 option('iris-prefix', type: 'string', value: '/usr/local', description: 'Installed Iris GenTL prefix')
 option('iris-libdir', type: 'string', value: '', description: 'Iris shared library directory (defaults to iris-prefix/lib)')
 option('test-mock-cti', type: 'string', value: '', description: 'Iris in-tree mock CTI path')
-option('test-edt-cti', type: 'string', value: '', description: 'EDT mock CTI path for integration tests')
-option('test-andor-cti', type: 'string', value: '', description: 'Andor SimCam CTI path for integration tests')
 option('test-pipewireao-bindir', type: 'string', value: '', description: 'Installed PipeWireAO executable directory for the optional daemon test')

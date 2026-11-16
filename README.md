@@ -41,8 +41,8 @@ production deployment.
 | `api.iris.serial-number` | Serial number reported by the producer. An interface ID can narrow the search. |
 | `api.iris.interface-id`, `api.iris.device-id` | Exact GenTL identity. Use both together to select by ID. |
 | `api.iris.stream-index` | Zero-based data stream index. Defaults to `0`. |
-| `api.iris.buffer-count` | GenTL acquisition buffer count. Omit to let Iris choose. |
-| `api.iris.acquisition-control` | `remote-and-stream` by default. Set `stream-only` if remote commands are controlled separately, or for a free-running EDT mock. |
+| `api.iris.buffer-count` | Exact GenTL acquisition buffer count. Omit to let Iris use its default, which is at least the producer minimum. |
+| `api.iris.acquisition-control` | `remote-and-stream` by default. Set `stream-only` when the application or producer controls remote acquisition separately. |
 | `api.iris.initial-controls` | Alternating remote GenApi feature names and textual values. Iris applies them in order before reading the image format. |
 
 With no device selector, the producer must discover exactly one camera. Initial
@@ -69,8 +69,8 @@ implementation still determines the producer-side cost.
 
 Build `iris-test-cti.cti` from the v0.2.3 Iris source with `BUILD_TESTING=ON`.
 The in-tree test exercises frame delivery and restart through the SPA node.
-With the PipeWireAO executable directory configured, it also verifies that
-frames reach a client on an isolated daemon.
+With the PipeWireAO executable directory configured, two independently loaded
+mock CTIs deliver overlapping streams to clients on an isolated daemon.
 
 ```sh
 meson configure build \
@@ -82,28 +82,5 @@ meson test -C build --print-errorlogs
 GitHub CI runs the factory, acquisition restart, and daemon graph checks on
 Debian 13 with the Iris v0.2.3 package and PipeWireAO v4.0.4.
 
-### Optional external simulators
-
-The factory test runs with only the Iris installation. Supply both CTI paths to
-test simultaneous EDT mock and Andor SimCam capture through the SPA API.
-Supply the PipeWireAO executable directory to also run the two sources on an
-isolated daemon and verify overlapping frame delivery to two graph clients.
-
-```sh
-meson configure build \
-  -Dtest-edt-cti=/path/to/edtpdv.cti \
-  -Dtest-andor-cti=/path/to/AndorSDK3GenTL.cti \
-  -Dtest-pipewireao-bindir=/opt/pipewireao/current/bin
-export EDTPDV_CLPROTOCOL=/path/to/libCLProtocol_test.so
-export LD_LIBRARY_PATH=/path/to/iris/lib:/path/to/genapi/bin/Linux64_x64:/path/to/simcam/lib
-meson test -C build --print-errorlogs
-```
-
-Use the SimCam runtime that exposes serial `SFT-1000`. Tests select the EDT mock
-with 16-bit pixels and disable its native-ring mode for the test process.
-The daemon test gets its base configuration from the install tree, or from
+The daemon test gets its base configuration from the install tree or from
 `PIPEWIREAO_CONFIG_DIR` when set.
-
-Repeated simulator runs exposed an intermittent invalid free inside the Andor
-SimCam runtime. AddressSanitizer traced the free to
-`TFifoDataReader_WaitUser::Pulse` in `libatdevsimcam.so`.

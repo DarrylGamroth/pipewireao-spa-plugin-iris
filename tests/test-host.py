@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Run Iris sources and clients on a private PipeWireAO daemon."""
+"""Run two Iris mock sources and clients on a private PipeWireAO daemon."""
 
 import json
 import os
@@ -32,43 +32,27 @@ def stop(process):
 
 
 def main():
-    bindir, client, plugin, installed_plugins, installed_modules, *ctis = map(Path, sys.argv[1:])
-    if len(ctis) == 1:
-        devices = {
-            "iris-mock": {
-                "api.iris.producer": str(ctis[0]),
-                "api.iris.acquisition-control": "stream-only",
-                "api.iris.buffer-count": 1,
-            },
-        }
-    else:
-        edt, andor = ctis
-        devices = {
-            "iris-edt": {
-                "api.iris.producer": str(edt),
-                "api.iris.acquisition-control": "stream-only",
-                "api.iris.initial-controls": ["TriggerMode", "Off"],
-            },
-            "iris-andor": {
-                "api.iris.producer": str(andor),
-                "api.iris.serial-number": "SFT-1000",
-                "api.iris.initial-controls": ["AcquisitionMode", "Continuous", "ExposureTime", "2000"],
-            },
-        }
-    objects = [
-        {
-            "factory": "spa-node-factory",
-            "args": {
-                "factory.name": "api.iris.source",
-                "node.name": name,
-                "node.loop.name": name,
-                **properties,
-            },
-        }
-        for name, properties in devices.items()
-    ]
+    bindir, client, plugin, installed_plugins, installed_modules, cti = map(Path, sys.argv[1:])
     with TemporaryDirectory(prefix="pwao-iris-") as directory:
         runtime = Path(directory)
+        # Load the same mock implementation with independent producer state.
+        second_cti = runtime / "iris-test-cti-second.cti"
+        shutil.copyfile(cti, second_cti)
+        devices = {"iris-mock-1": cti, "iris-mock-2": second_cti}
+        objects = [
+            {
+                "factory": "spa-node-factory",
+                "args": {
+                    "factory.name": "api.iris.source",
+                    "node.name": name,
+                    "node.loop.name": name,
+                    "api.iris.producer": str(path),
+                    "api.iris.acquisition-control": "stream-only",
+                    "api.iris.buffer-count": 1,
+                },
+            }
+            for name, path in devices.items()
+        ]
         config = runtime / "config"
         dropins = config / "pipewire.conf.d"
         dropins.mkdir(parents=True)
@@ -136,7 +120,7 @@ def main():
                             print(f"{name}: {count} valid frames")
                             intervals.append((int(first_pts), int(last_pts)))
                             poll.unregister(key.fileobj)
-                if len(intervals) > 1 and max(start for start, _ in intervals) >= min(end for _, end in intervals):
+                if max(start for start, _ in intervals) >= min(end for _, end in intervals):
                     raise RuntimeError("the two graph streams did not overlap")
                 for process in processes:
                     stop(process)

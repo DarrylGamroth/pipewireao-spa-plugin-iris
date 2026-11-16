@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include <spa/buffer/meta.h>
 #include <spa/node/io.h>
@@ -140,28 +139,6 @@ static bool read_frame(struct capture *capture)
 	return true;
 }
 
-static void read_captures(struct capture *edt, struct capture *andor)
-{
-	struct timespec now;
-	const uint32_t edt_target = edt ? edt->frames + 4 : 0;
-	const uint32_t andor_target = andor->frames + 4;
-	CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
-	const time_t deadline = now.tv_sec + 8;
-	while ((edt && edt->frames < edt_target) || andor->frames < andor_target) {
-		if (edt && edt->frames < edt_target)
-			read_frame(edt);
-		if (andor->frames < andor_target)
-			read_frame(andor);
-		nanosleep(&(struct timespec) { .tv_nsec = 1000000 }, NULL);
-		CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
-		if (now.tv_sec >= deadline) {
-			fprintf(stderr, "capture timeout: EDT %u/%u, Andor %u/%u\n",
-					edt ? edt->frames : 0, edt_target, andor->frames, andor_target);
-			exit(1);
-		}
-	}
-}
-
 static void close_capture(struct capture *capture)
 {
 	command(capture, SPA_NODE_COMMAND_Suspend);
@@ -177,7 +154,7 @@ int main(int argc, char **argv)
 {
 	const struct spa_handle_factory *factory = NULL;
 	uint32_t index = 0;
-	CHECK(argc >= 2 && argc <= 4);
+	CHECK(argc == 2 || argc == 3);
 	void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 	if (!library)
 		fprintf(stderr, "%s\n", dlerror());
@@ -208,51 +185,20 @@ int main(int argc, char **argv)
 				CHECK(buffer->chunk.size == sizeof(pixels));
 				CHECK(memcmp(buffer->data.data, pixels, sizeof(pixels)) == 0);
 			}
+			/* Keep one SPA buffer leased while requesting another frame. */
+			const uint32_t held_id = mock.io.buffer_id;
+			const struct graph_buffer *held = &mock.storage[held_id];
+			const uint64_t sequence = held->header.seq;
+			mock.io.buffer_id = SPA_ID_INVALID;
+			CHECK(read_frame(&mock));
+			CHECK(mock.io.buffer_id != held_id && held->header.seq == sequence);
+			CHECK(memcmp(held->data.data, pixels, sizeof(pixels)) == 0);
+			CHECK(spa_node_port_reuse_buffer(mock.node, 0, held_id) == 0);
 			command(&mock, SPA_NODE_COMMAND_Pause);
 			CHECK(spa_node_process(mock.node) == SPA_STATUS_OK);
 		}
 		printf("Iris mock: %u frames across two acquisition cycles\n", mock.frames);
 		close_capture(&mock);
-	} else if (argc == 4) {
-		const struct spa_dict_item edt_props[] = {
-			{ "api.iris.producer", argv[2] },
-			{ "api.iris.acquisition-control", "stream-only" },
-			{ "api.iris.initial-controls", "[ TriggerMode Off ]" },
-		};
-		const struct spa_dict_item andor_props[] = {
-			{ "api.iris.producer", argv[3] },
-			{ "api.iris.serial-number", "SFT-1000" },
-			{ "api.iris.initial-controls", "[ ExposureTime 2000 AcquisitionMode Continuous ]" },
-		};
-		struct capture edt = { 0 }, andor = { 0 };
-		open_capture(&edt, factory, &SPA_DICT_INIT_ARRAY(edt_props), SPA_VIDEO_FORMAT_GRAY16_LE);
-		open_capture(&andor, factory, &SPA_DICT_INIT_ARRAY(andor_props), SPA_VIDEO_FORMAT_GRAY16_LE);
-		command(&edt, SPA_NODE_COMMAND_Start);
-		command(&andor, SPA_NODE_COMMAND_Start);
-		read_captures(&edt, &andor);
-
-		/* Return the first graph buffer later, through the explicit reuse callback. */
-		const uint32_t held_id = edt.io.buffer_id;
-		const struct graph_buffer *held = &edt.storage[held_id];
-		const uint64_t held_sequence = held->header.seq;
-		const uint8_t held_pixel = ((const uint8_t *)held->data.data)[0];
-		edt.io.buffer_id = SPA_ID_INVALID;
-		read_captures(&edt, &andor);
-		CHECK(edt.io.buffer_id != held_id);
-		CHECK(held->header.seq == held_sequence &&
-				((const uint8_t *)held->data.data)[0] == held_pixel);
-		CHECK(spa_node_port_reuse_buffer(edt.node, 0, held_id) == 0);
-
-		for (unsigned cycle = 0; cycle < 3; cycle++) {
-			command(&edt, SPA_NODE_COMMAND_Pause);
-			CHECK(spa_node_process(edt.node) == SPA_STATUS_OK);
-			read_captures(NULL, &andor);
-			command(&edt, SPA_NODE_COMMAND_Start);
-			read_captures(&edt, &andor);
-		}
-		printf("EDT: %u frames, Andor: %u frames\n", edt.frames, andor.frames);
-		close_capture(&edt);
-		close_capture(&andor);
 	}
 	CHECK(dlclose(library) == 0);
 	return 0;
