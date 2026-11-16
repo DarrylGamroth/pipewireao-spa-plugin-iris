@@ -59,7 +59,8 @@ jobs:
 
       - name: Build the in-tree CTI
         run: |
-          cmake -S iris-source -B "$RUNNER_TEMP/iris-mock" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -G Ninja -S iris-source -B "$RUNNER_TEMP/iris-mock" \
+            -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build "$RUNNER_TEMP/iris-mock" --target iris-test-cti --parallel
 
       - name: Build the plugin and test the mock graph
