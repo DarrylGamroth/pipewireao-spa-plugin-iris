@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include <errno.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -105,6 +106,17 @@ static int send_command(void *object, const struct spa_command *command)
 		}
 		if (!self->have_format || self->n_buffers == 0 || self->io == NULL) {
 			res = -EIO;
+			break;
+		}
+		const uint32_t requested_count = self->camera.options.buffer_count;
+		iris_buffer_requirements_t requirements;
+		if (requested_count &&
+				iris_stream_buffer_requirements(self->camera.stream, &requirements) == IRIS_OK &&
+				requested_count < requirements.minimum_buffer_count) {
+			spa_log_error(self->log,
+					"Iris stream start: requested buffer count %" PRIu32 " is below producer minimum %zu",
+					requested_count, requirements.minimum_buffer_count);
+			res = -ERANGE;
 			break;
 		}
 		self->stop_pending = true;

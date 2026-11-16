@@ -204,7 +204,8 @@ int main(int argc, char **argv)
 			props[2].value = argv[4];
 			open_capture(&rejected, factory, &properties, SPA_VIDEO_FORMAT_GRAY16_LE);
 			CHECK(command(&rejected, SPA_NODE_COMMAND_Start) == -ERANGE);
-			CHECK(strstr(rejected.error, "Iris stream start: buffer count below producer minimum") != NULL);
+			CHECK(strstr(rejected.error,
+					"Iris stream start: requested buffer count 1 is below producer minimum 2") != NULL);
 			CHECK(spa_node_process(rejected.node) == SPA_STATUS_OK);
 			CHECK(rejected.io.status == SPA_STATUS_NEED_DATA);
 			close_capture(&rejected);
