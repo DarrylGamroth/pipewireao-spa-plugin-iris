@@ -51,6 +51,10 @@ Earlier writes stay applied if a later write fails. Set geometry and pixel
 format here, then recreate the node to change them. This version exposes
 startup controls through configuration.
 
+If an explicit buffer count is below the producer minimum, starting the node
+returns `-ERANGE` and logs `buffer count below producer minimum`. Set a valid
+count in the configuration and recreate the node to start acquisition.
+
 The output is raw video. PFNC `Mono8` maps to SPA `GRAY8`. Unpacked
 `Mono10`, `Mono12`, `Mono14`, and `Mono16` map to `GRAY16_LE` with the
 original sample values. The camera determines the frame cadence. The source

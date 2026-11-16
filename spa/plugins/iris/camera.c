@@ -37,7 +37,7 @@ int iris_result(iris_status_t status)
 	}
 }
 
-static int report_error(struct spa_log *log, iris_status_t status)
+int iris_report_error(struct spa_log *log, iris_status_t status)
 {
 	iris_error_t error;
 	iris_last_error(&error);
@@ -79,7 +79,7 @@ static int open_device(struct iris_camera *camera, const struct spa_dict *props,
 		status = iris_discover(camera->context, selector.producer,
 				update_timeout_ms, &devices);
 		if (status != IRIS_OK)
-			return report_error(log, status);
+			return iris_report_error(log, status);
 		size_t count = iris_device_list_count(devices);
 		if (count != 1) {
 			spa_log_error(log, "%s: found %zu cameras; select by serial or exact IDs",
@@ -89,7 +89,7 @@ static int open_device(struct iris_camera *camera, const struct spa_dict *props,
 		}
 		status = iris_device_list_get(devices, 0, &info);
 		if (status != IRIS_OK) {
-			res = report_error(log, status);
+			res = iris_report_error(log, status);
 			goto done;
 		}
 		selector.interface_id = info.interface_id;
@@ -97,7 +97,7 @@ static int open_device(struct iris_camera *camera, const struct spa_dict *props,
 	}
 	status = iris_device_open(camera->context, &selector, IRIS_DEVICE_CONTROL,
 			update_timeout_ms, &camera->device);
-	res = status == IRIS_OK ? 0 : report_error(log, status);
+	res = status == IRIS_OK ? 0 : iris_report_error(log, status);
 done:
 	iris_device_list_close(&devices);
 	return res;
@@ -127,7 +127,7 @@ static int configure_features(iris_node_map_t *map, const char *controls,
 		iris_status_t status = iris_feature_from_string(map, name, setting);
 		if (status != IRIS_OK) {
 			spa_log_error(log, "api.iris.initial-controls: cannot set %s", name);
-			return report_error(log, status);
+			return iris_report_error(log, status);
 		}
 	}
 	return len < 0 || spa_json_next(&root, &value) != 0 ? -EINVAL : 0;
@@ -147,7 +147,7 @@ static int read_format(struct iris_camera *camera, iris_node_map_t *map,
 	if (status == IRIS_OK)
 		status = iris_feature_get_integer(map, "Height", &height);
 	if (status != IRIS_OK)
-		return report_error(log, status);
+		return iris_report_error(log, status);
 	if (width <= 0 || height <= 0 || width > INT32_MAX || height > INT32_MAX)
 		return -ERANGE;
 	for (size_t i = 0; i < SPA_N_ELEMENTS(pixel_formats); i++) {
@@ -194,17 +194,17 @@ int iris_camera_open(struct iris_camera *camera, const struct spa_dict *props,
 
 	status = iris_context_create(&camera->context);
 	if (status != IRIS_OK)
-		return report_error(log, status);
+		return iris_report_error(log, status);
 	if ((res = open_device(camera, props, log)) < 0)
 		return res;
 	status = iris_device_node_map(camera->device, IRIS_REMOTE_DEVICE, &map);
 	if (status != IRIS_OK)
-		return report_error(log, status);
+		return iris_report_error(log, status);
 	if ((res = configure_features(map, property(props, "api.iris.initial-controls"), log)) < 0 ||
 			(res = read_format(camera, map, log)) < 0)
 		return res;
 	status = iris_stream_open(camera->device, stream_index, &camera->stream);
-	return status == IRIS_OK ? 0 : report_error(log, status);
+	return status == IRIS_OK ? 0 : iris_report_error(log, status);
 }
 
 int iris_camera_close(struct iris_camera *camera, struct spa_log *log)
@@ -216,5 +216,5 @@ int iris_camera_close(struct iris_camera *camera, struct spa_log *log)
 		status = iris_device_close(&camera->device);
 	if (status == IRIS_OK && camera->context != NULL)
 		status = iris_context_close(&camera->context);
-	return status == IRIS_OK ? 0 : report_error(log, status);
+	return status == IRIS_OK ? 0 : iris_report_error(log, status);
 }

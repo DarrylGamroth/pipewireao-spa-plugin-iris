@@ -22,5 +22,6 @@ int iris_camera_open(struct iris_camera *camera, const struct spa_dict *props,
 		struct spa_log *log);
 int iris_camera_close(struct iris_camera *camera, struct spa_log *log);
 int iris_result(iris_status_t status);
+int iris_report_error(struct spa_log *log, iris_status_t status);
 
 #endif

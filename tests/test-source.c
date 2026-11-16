@@ -11,6 +11,7 @@
 #include <spa/node/node.h>
 #include <spa/node/utils.h>
 #include <spa/param/video/format-utils.h>
+#include <spa/support/log.h>
 #include <spa/support/plugin.h>
 
 #define CHECK(condition) do { 	if (!(condition)) { 		fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #condition); 		exit(1); 	} } while (0)
@@ -32,7 +33,22 @@ struct capture {
 	struct spa_buffer *buffers[2];
 	uint64_t sequence;
 	uint32_t frames;
+	struct spa_log log;
+	char error[256];
 };
+
+static void log_error(void *object, enum spa_log_level level,
+		const char *file SPA_UNUSED, int line SPA_UNUSED, const char *func SPA_UNUSED,
+		const char *format, ...)
+{
+	struct capture *capture = object;
+	if (level != SPA_LOG_LEVEL_ERROR)
+		return;
+	va_list args;
+	va_start(args, format);
+	vsnprintf(capture->error, sizeof(capture->error), format, args);
+	va_end(args);
+}
 
 static void result(void *data, int seq SPA_UNUSED, int res,
 		uint32_t type, const void *result)
@@ -57,9 +73,17 @@ static void open_capture(struct capture *capture, const struct spa_handle_factor
 	uint8_t pod_memory[256];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(pod_memory, sizeof(pod_memory));
 
+	static const struct spa_log_methods log_methods = { .version = 0, .log = log_error };
+	capture->log = (struct spa_log) {
+		.iface = SPA_INTERFACE_INIT(SPA_TYPE_INTERFACE_Log, SPA_VERSION_LOG, &log_methods, capture),
+		.level = SPA_LOG_LEVEL_ERROR,
+	};
+	const struct spa_support support[] = {
+		{ SPA_TYPE_INTERFACE_Log, &capture->log },
+	};
 	capture->handle = calloc(1, spa_handle_factory_get_size(factory, props));
 	CHECK(capture->handle != NULL);
-	int res = spa_handle_factory_init(factory, capture->handle, props, NULL, 0);
+	int res = spa_handle_factory_init(factory, capture->handle, props, support, SPA_N_ELEMENTS(support));
 	if (res < 0)
 		fprintf(stderr, "factory init: %s (%d)\n", strerror(-res), res);
 	CHECK(res == 0);
@@ -106,10 +130,10 @@ static void open_capture(struct capture *capture, const struct spa_handle_factor
 			&capture->io, sizeof(capture->io)) == 0);
 }
 
-static void command(struct capture *capture, uint32_t id)
+static int command(struct capture *capture, uint32_t id)
 {
 	struct spa_command command = SPA_NODE_COMMAND_INIT(id);
-	CHECK(spa_node_send_command(capture->node, &command) == 0);
+	return spa_node_send_command(capture->node, &command);
 }
 
 static bool read_frame(struct capture *capture)
@@ -141,7 +165,7 @@ static bool read_frame(struct capture *capture)
 
 static void close_capture(struct capture *capture)
 {
-	command(capture, SPA_NODE_COMMAND_Suspend);
+	CHECK(command(capture, SPA_NODE_COMMAND_Suspend) == 0);
 	CHECK(spa_node_port_set_param(capture->node, SPA_DIRECTION_OUTPUT, 0,
 			SPA_PARAM_Format, 0, NULL) == 0);
 	CHECK(spa_handle_clear(capture->handle) == 0);
@@ -154,7 +178,7 @@ int main(int argc, char **argv)
 {
 	const struct spa_handle_factory *factory = NULL;
 	uint32_t index = 0;
-	CHECK(argc >= 2 && argc <= 4);
+	CHECK(argc >= 2 && argc <= 5);
 	void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 	if (!library)
 		fprintf(stderr, "%s\n", dlerror());
@@ -168,18 +192,29 @@ int main(int argc, char **argv)
 	CHECK(spa_handle_factory_init(factory, empty, NULL, NULL, 0) == -EINVAL);
 	free(empty);
 	if (argc >= 3) {
-		const struct spa_dict_item props[] = {
+		struct spa_dict_item props[] = {
 			{ "api.iris.producer", argv[2] },
 			{ "api.iris.acquisition-control", "stream-only" },
-			{ "api.iris.buffer-count", argc == 4 ? argv[3] : NULL },
+			{ "api.iris.buffer-count", argc >= 4 ? argv[3] : NULL },
 		};
 		static const uint8_t pixels[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+		const struct spa_dict properties = SPA_DICT_INIT(props, argc >= 4 ? 3 : 2);
+		if (argc == 5) {
+			struct capture rejected = { 0 };
+			props[2].value = argv[4];
+			open_capture(&rejected, factory, &properties, SPA_VIDEO_FORMAT_GRAY16_LE);
+			CHECK(command(&rejected, SPA_NODE_COMMAND_Start) == -ERANGE);
+			CHECK(strstr(rejected.error, "Iris stream start: buffer count below producer minimum") != NULL);
+			CHECK(spa_node_process(rejected.node) == SPA_STATUS_OK);
+			CHECK(rejected.io.status == SPA_STATUS_NEED_DATA);
+			close_capture(&rejected);
+			props[2].value = argv[3];
+		}
 		struct capture mock = { 0 };
-		const struct spa_dict properties = SPA_DICT_INIT(props, argc == 4 ? 3 : 2);
 		open_capture(&mock, factory, &properties, SPA_VIDEO_FORMAT_GRAY16_LE);
 		CHECK(mock.format.size.width == 2 && mock.format.size.height == 4);
 		for (unsigned cycle = 0; cycle < 2; ++cycle) {
-			command(&mock, SPA_NODE_COMMAND_Start);
+			CHECK(command(&mock, SPA_NODE_COMMAND_Start) == 0);
 			for (unsigned frame = 0; frame < 12; ++frame) {
 				CHECK(read_frame(&mock));
 				struct graph_buffer *buffer = &mock.storage[mock.io.buffer_id];
@@ -195,7 +230,7 @@ int main(int argc, char **argv)
 			CHECK(mock.io.buffer_id != held_id && held->header.seq == sequence);
 			CHECK(memcmp(held->data.data, pixels, sizeof(pixels)) == 0);
 			CHECK(spa_node_port_reuse_buffer(mock.node, 0, held_id) == 0);
-			command(&mock, SPA_NODE_COMMAND_Pause);
+			CHECK(command(&mock, SPA_NODE_COMMAND_Pause) == 0);
 			CHECK(spa_node_process(mock.node) == SPA_STATUS_OK);
 		}
 		printf("Iris mock: %u frames across two acquisition cycles\n", mock.frames);

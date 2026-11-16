@@ -108,8 +108,9 @@ static int send_command(void *object, const struct spa_command *command)
 			break;
 		}
 		self->stop_pending = true;
-		res = iris_result(iris_stream_start(self->camera.stream, &self->camera.options));
-		if (res < 0) {
+		const iris_status_t status = iris_stream_start(self->camera.stream, &self->camera.options);
+		if (status != IRIS_OK) {
+			res = iris_report_error(self->log, status);
 			(void)stop(self);
 			break;
 		}

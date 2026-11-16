@@ -8,6 +8,7 @@ if mock_cti != ''
     {'name': 'automatic-buffer-count', 'min': '1', 'expected': '8', 'args': []},
     {'name': 'automatic-buffer-count-producer-minimum', 'min': '10', 'expected': '10', 'args': []},
     {'name': 'explicit-buffer-count', 'min': '2', 'expected': '4', 'args': ['4']},
+    {'name': 'buffer-count-below-minimum', 'min': '2', 'expected': '4', 'args': ['4', '1']},
   ]
     test(case['name'], source_test,
       args: [plugin.full_path(), mock_cti] + case['args'],
