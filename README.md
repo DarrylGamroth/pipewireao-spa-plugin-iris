@@ -79,6 +79,9 @@ meson configure build \
 meson test -C build --print-errorlogs
 ```
 
+GitHub CI runs the factory, acquisition restart, and daemon graph checks on
+Debian 13 with the Iris v0.2.3 package and PipeWireAO v4.0.4.
+
 ### Optional external simulators
 
 The factory test runs with only the Iris installation. Supply both CTI paths to

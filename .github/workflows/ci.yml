@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  mock:
+    name: Iris v0.2.3 and PipeWireAO in-tree mock
+    runs-on: ubuntu-24.04
+    container:
+      image: docker.io/library/debian@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 # Debian 13
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      IRIS_DEB: iris-gentl_0.2.3_debian13_amd64.deb
+      PIPEWIREAO_TARBALL: PipeWireAO.v4.0.4.x86_64-linux-gnu.tar.gz
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates cmake curl g++ git libarchive-dev libxml2-dev meson ninja-build pkgconf python3
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: DarrylGamroth/iris-gentl
+          ref: 5f438c086b6c31d5ec18606f77c79c389cb141ec # v0.2.3
+          path: iris-source
+          persist-credentials: false
+
+      - name: Install and verify Iris v0.2.3 and PipeWireAO v4.0.4
+        run: |
+          cd "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location --retry 3 --output "$IRIS_DEB" \
+            "https://github.com/DarrylGamroth/iris-gentl/releases/download/v0.2.3/$IRIS_DEB"
+          printf '%s  %s\n' 5a629bd97d647c98e35fa1644e49c0521cad645bd49336e8cfe3356a7c1fbfe4 "$IRIS_DEB" \
+            | sha256sum --strict --check -
+          apt-get install -y --no-install-recommends "./$IRIS_DEB"
+          test "$(dpkg-query -W -f='${Version}' iris-gentl)" = 0.2.3
+
+          curl --fail --silent --show-error --location --retry 3 --output "$PIPEWIREAO_TARBALL" \
+            "https://github.com/DarrylGamroth/PipeWireAO_jll.jl/releases/download/PipeWireAO-v4.0.4+0/$PIPEWIREAO_TARBALL"
+          printf '%s  %s\n' bbc43785fd5c8bd0c0d5b724ebfc863326b1a2f59b16298df505268fe4c74014 "$PIPEWIREAO_TARBALL" \
+            | sha256sum --strict --check -
+          mkdir "$RUNNER_TEMP/pipewireao"
+          tar -xzf "$PIPEWIREAO_TARBALL" -C "$RUNNER_TEMP/pipewireao"
+
+      - name: Build the in-tree CTI
+        run: |
+          cmake -S iris-source -B "$RUNNER_TEMP/iris-mock" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/iris-mock" --target iris-test-cti --parallel
+
+      - name: Build the plugin and test the mock graph
+        run: |
+          pipewireao="$RUNNER_TEMP/pipewireao"
+          export PKG_CONFIG_PATH="$pipewireao/lib/pkgconfig"
+          export LD_LIBRARY_PATH="$pipewireao/lib"
+          meson setup "$RUNNER_TEMP/plugin" -Dwerror=true \
+            -Diris-prefix=/usr -Diris-libdir=/usr/lib/x86_64-linux-gnu \
+            -Dtest-mock-cti="$RUNNER_TEMP/iris-mock/iris-test-cti.cti" \
+            -Dtest-pipewireao-bindir="$pipewireao/bin"
+          meson compile -C "$RUNNER_TEMP/plugin"
+          meson test -C "$RUNNER_TEMP/plugin" --print-errorlogs
