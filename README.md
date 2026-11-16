@@ -7,7 +7,7 @@ multiple devices or producers in one daemon.
 ## Build and install
 
 Install PipeWireAO with its development files and install
-[Iris GenTL v0.2.3](https://github.com/DarrylGamroth/iris-gentl/releases/tag/v0.2.3).
+[Iris GenTL v0.2.4](https://github.com/DarrylGamroth/iris-gentl/releases/tag/v0.2.4).
 The Iris packages include the GenApi runtime. The plugin links to the
 installed Iris C library. Install your camera producer and its runtime
 separately.
@@ -88,7 +88,7 @@ meson test -C build --print-errorlogs
 ```
 
 GitHub CI runs the factory, acquisition restart, and daemon graph checks on
-Debian 13 with the Iris v0.2.3 package and PipeWireAO v4.0.4.
+Debian 13 with the Iris v0.2.4 package and PipeWireAO v4.0.4.
 
 The daemon test gets its base configuration from the install tree or from
 `PIPEWIREAO_CONFIG_DIR` when set.

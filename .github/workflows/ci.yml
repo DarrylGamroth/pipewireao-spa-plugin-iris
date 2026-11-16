@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   mock:
-    name: Iris v0.2.3 and PipeWireAO in-tree mock
+    name: Iris v0.2.4 and PipeWireAO in-tree mock
     runs-on: ubuntu-24.04
     container:
       image: docker.io/library/debian@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 # Debian 13
@@ -20,7 +20,7 @@ jobs:
       run:
         shell: bash
     env:
-      IRIS_DEB: iris-gentl_0.2.3_debian13_amd64.deb
+      IRIS_DEB: iris-gentl_0.2.4_debian13_amd64.deb
       PIPEWIREAO_TARBALL: PipeWireAO.v4.0.4.x86_64-linux-gnu.tar.gz
     steps:
       - name: Install build dependencies
@@ -36,19 +36,19 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: DarrylGamroth/iris-gentl
-          ref: 68d3bfc0fc7e0155d64aa1cd7c8f3c4bc5a9a31c # Multi-buffer mock CTI
+          ref: 738b041b6fb789e7d369c007dcb658674d08f5d8 # v0.2.4
           path: iris-source
           persist-credentials: false
 
-      - name: Install and verify Iris v0.2.3 and PipeWireAO v4.0.4
+      - name: Install and verify Iris v0.2.4 and PipeWireAO v4.0.4
         run: |
           cd "$RUNNER_TEMP"
           curl --fail --silent --show-error --location --retry 3 --output "$IRIS_DEB" \
-            "https://github.com/DarrylGamroth/iris-gentl/releases/download/v0.2.3/$IRIS_DEB"
-          printf '%s  %s\n' 5a629bd97d647c98e35fa1644e49c0521cad645bd49336e8cfe3356a7c1fbfe4 "$IRIS_DEB" \
+            "https://github.com/DarrylGamroth/iris-gentl/releases/download/v0.2.4/$IRIS_DEB"
+          printf '%s  %s\n' f943dadcad25de4b6f313c12d546e79981e1d6e3903d540b5bd1985bded563b5 "$IRIS_DEB" \
             | sha256sum --strict --check -
           apt-get install -y --no-install-recommends "./$IRIS_DEB"
-          test "$(dpkg-query -W -f='${Version}' iris-gentl)" = 0.2.3
+          test "$(dpkg-query -W -f='${Version}' iris-gentl)" = 0.2.4
 
           curl --fail --silent --show-error --location --retry 3 --output "$PIPEWIREAO_TARBALL" \
             "https://github.com/DarrylGamroth/PipeWireAO_jll.jl/releases/download/PipeWireAO-v4.0.4+0/$PIPEWIREAO_TARBALL"
@@ -74,3 +74,4 @@ jobs:
             -Dtest-pipewireao-bindir="$pipewireao/bin"
           meson compile -C "$RUNNER_TEMP/plugin"
           meson test -C "$RUNNER_TEMP/plugin" --print-errorlogs
+          IRIS_MOCK_STACKED_INFO=1 meson test -C "$RUNNER_TEMP/plugin" --print-errorlogs
