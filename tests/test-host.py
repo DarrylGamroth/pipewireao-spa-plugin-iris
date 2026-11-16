@@ -38,7 +38,10 @@ def main():
         # Load the same mock implementation with independent producer state.
         second_cti = runtime / "iris-test-cti-second.cti"
         shutil.copyfile(cti, second_cti)
-        devices = {"iris-mock-1": cti, "iris-mock-2": second_cti}
+        devices = {
+            "iris-mock-auto": (cti, {}),
+            "iris-mock-explicit": (second_cti, {"api.iris.buffer-count": 4}),
+        }
         objects = [
             {
                 "factory": "spa-node-factory",
@@ -48,10 +51,10 @@ def main():
                     "node.loop.name": name,
                     "api.iris.producer": str(path),
                     "api.iris.acquisition-control": "stream-only",
-                    "api.iris.buffer-count": 1,
+                    **properties,
                 },
             }
-            for name, path in devices.items()
+            for name, (path, properties) in devices.items()
         ]
         config = runtime / "config"
         dropins = config / "pipewire.conf.d"

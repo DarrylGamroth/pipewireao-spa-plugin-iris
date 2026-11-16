@@ -154,7 +154,7 @@ int main(int argc, char **argv)
 {
 	const struct spa_handle_factory *factory = NULL;
 	uint32_t index = 0;
-	CHECK(argc == 2 || argc == 3);
+	CHECK(argc >= 2 && argc <= 4);
 	void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 	if (!library)
 		fprintf(stderr, "%s\n", dlerror());
@@ -167,19 +167,20 @@ int main(int argc, char **argv)
 	CHECK(empty != NULL);
 	CHECK(spa_handle_factory_init(factory, empty, NULL, NULL, 0) == -EINVAL);
 	free(empty);
-	if (argc == 3) {
+	if (argc >= 3) {
 		const struct spa_dict_item props[] = {
 			{ "api.iris.producer", argv[2] },
 			{ "api.iris.acquisition-control", "stream-only" },
-			{ "api.iris.buffer-count", "1" },
+			{ "api.iris.buffer-count", argc == 4 ? argv[3] : NULL },
 		};
 		static const uint8_t pixels[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
 		struct capture mock = { 0 };
-		open_capture(&mock, factory, &SPA_DICT_INIT_ARRAY(props), SPA_VIDEO_FORMAT_GRAY16_LE);
+		const struct spa_dict properties = SPA_DICT_INIT(props, argc == 4 ? 3 : 2);
+		open_capture(&mock, factory, &properties, SPA_VIDEO_FORMAT_GRAY16_LE);
 		CHECK(mock.format.size.width == 2 && mock.format.size.height == 4);
 		for (unsigned cycle = 0; cycle < 2; ++cycle) {
 			command(&mock, SPA_NODE_COMMAND_Start);
-			for (unsigned frame = 0; frame < 4; ++frame) {
+			for (unsigned frame = 0; frame < 12; ++frame) {
 				CHECK(read_frame(&mock));
 				struct graph_buffer *buffer = &mock.storage[mock.io.buffer_id];
 				CHECK(buffer->chunk.size == sizeof(pixels));

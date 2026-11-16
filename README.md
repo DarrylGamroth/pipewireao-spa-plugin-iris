@@ -67,10 +67,13 @@ implementation still determines the producer-side cost.
 
 ## Simulator tests
 
-Build `iris-test-cti.cti` from the v0.2.3 Iris source with `BUILD_TESTING=ON`.
-The in-tree test exercises frame delivery and restart through the SPA node.
-With the PipeWireAO executable directory configured, two independently loaded
-mock CTIs deliver overlapping streams to clients on an isolated daemon.
+Build `iris-test-cti.cti` from the Iris source revision pinned in the
+[CI workflow](.github/workflows/ci.yml) with `BUILD_TESTING=ON`. The fixture
+checks the announced count for the automatic default, a producer minimum
+above that default, and an explicit count. The tests also exercise frame
+delivery and restart through the SPA node. With the PipeWireAO executable
+directory configured, two independently loaded mock CTIs deliver overlapping
+streams with automatic and explicit counts on an isolated daemon.
 
 ```sh
 meson configure build \

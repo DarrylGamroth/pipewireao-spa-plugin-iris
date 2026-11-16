@@ -4,11 +4,21 @@ source_test = executable('test-iris-source', 'test-source.c',
 test('factory', source_test, args: [plugin.full_path()], depends: plugin)
 mock_cti = get_option('test-mock-cti')
 if mock_cti != ''
-  test('in-tree-mock-capture', source_test,
-    args: [plugin.full_path(), mock_cti],
-    depends: plugin,
-    env: environment({'IRIS_FAULT': 'progressive-complete'}),
-  )
+  foreach case : [
+    {'name': 'automatic-buffer-count', 'min': '1', 'expected': '8', 'args': []},
+    {'name': 'automatic-buffer-count-producer-minimum', 'min': '10', 'expected': '10', 'args': []},
+    {'name': 'explicit-buffer-count', 'min': '2', 'expected': '4', 'args': ['4']},
+  ]
+    test(case['name'], source_test,
+      args: [plugin.full_path(), mock_cti] + case['args'],
+      depends: plugin,
+      env: environment({
+        'IRIS_FAULT': 'progressive-pool',
+        'IRIS_MOCK_MIN_BUFFERS': case['min'],
+        'IRIS_MOCK_EXPECT_BUFFERS': case['expected'],
+      }),
+    )
+  endforeach
 endif
 
 host_bindir = get_option('test-pipewireao-bindir')
@@ -28,7 +38,7 @@ if host_bindir != ''
       pipewire.get_variable(pkgconfig: 'moduledir'), mock_cti,
     ],
     depends: [plugin, host_client],
-    env: environment({'IRIS_FAULT': 'progressive-paced'}),
+    env: environment({'IRIS_FAULT': 'progressive-pool'}),
     timeout: 30,
   )
 endif
