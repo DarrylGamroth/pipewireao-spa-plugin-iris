@@ -32,12 +32,12 @@ if control_cti != '' or mock_serial != '' or clprotocol != '' or control_config 
   if mock_cti == '' or control_cti == '' or mock_serial == '' or (clprotocol == '') == (control_config == '')
     error('Set test-mock-cti, test-control-cti, test-clserial, and either test-clprotocol or test-clprotocol-gentl-config')
   endif
-  control_fixtures += [{'name': 'cred2', 'args': []}]
   if control_config == ''
+    control_fixtures += [{'name': 'legacy-driver', 'args': []}]
     control_env += {'CRED2_CL_SERIAL': mock_serial, 'CRED2_CL_PROTOCOL': clprotocol}
   else
     control_env += {'CLPROTOCOL_GENTL_SERIAL': mock_serial, 'CLPROTOCOL_GENTL_CONFIG': control_config}
-    control_fixtures += [{'name': 'no-serial-token', 'args': ['no-token']}]
+    control_fixtures += [{'name': 'serial-token', 'args': []}, {'name': 'no-serial-token', 'args': ['no-token']}]
   endif
   foreach fixture : control_fixtures
     test('paired-serial-control-' + fixture['name'], source_test,

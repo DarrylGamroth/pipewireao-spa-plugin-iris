@@ -291,7 +291,9 @@ static void check_control_init_failure(const struct spa_handle_factory *factory,
 static void test_control_pair(const struct spa_handle_factory *factory, const char *stream_cti,
 		const char *control_cti, bool no_token)
 {
-	const char *serial = no_token ? "ALT-TEST-001" : "CRED2-TEST-001";
+	const bool generic_fixture = getenv("CLPROTOCOL_GENTL_CONFIG") != NULL;
+	const char *serial = no_token ? "ALT-TEST-001" :
+		(generic_fixture ? "PRIMARY-TEST-001" : "CRED2-TEST-001");
 	struct spa_dict_item props[] = {
 		{ "api.iris.producer", stream_cti },
 		{ "api.iris.serial-number", "test-serial" },
@@ -312,7 +314,7 @@ static void test_control_pair(const struct spa_handle_factory *factory, const ch
 	}
 	check_control_init_failure(factory, &properties, no_token ? -ENODEV : -ENOENT);
 	props[4].value = serial;
-	if (!no_token) {
+	if (!generic_fixture) {
 		CHECK(setenv("CRED2_SIM_CROP_COLUMNS", "0 31", 1) == 0);
 		check_control_init_failure(factory, &properties, -EINVAL);
 		CHECK(setenv("CRED2_SIM_CROP_COLUMNS", "0 1", 1) == 0);
@@ -335,20 +337,20 @@ static void test_control_pair(const struct spa_handle_factory *factory, const ch
 	CHECK(write_control(&camera, "genicam.Width", &width.pod, 0) == -EACCES);
 	CHECK(write_control(&camera, "genicam.Height", &width.pod, 0) == -ENOENT);
 
-	const char *serial_library = getenv("CLPROTOCOL_GENTL_CONFIG")
+	const char *serial_library = generic_fixture
 		? getenv("CLPROTOCOL_GENTL_SERIAL") : getenv("CRED2_CL_SERIAL");
 	CHECK(serial_library != NULL);
 	void *mock = dlopen(serial_library, RTLD_NOW | RTLD_LOCAL);
 	CHECK(mock);
 	struct serial_gate gate = {
 		.capture = &camera,
-		.hold = dlsym(mock, "cred2_sim_hold_command"),
-		.wait = dlsym(mock, "cred2_sim_wait_for_command"),
-		.release = dlsym(mock, "cred2_sim_release_command"),
+		.hold = dlsym(mock, generic_fixture ? "clprotocol_mock_hold_command" : "cred2_sim_hold_command"),
+		.wait = dlsym(mock, generic_fixture ? "clprotocol_mock_wait_for_command" : "cred2_sim_wait_for_command"),
+		.release = dlsym(mock, generic_fixture ? "clprotocol_mock_release_command" : "cred2_sim_release_command"),
 	};
 	CHECK(gate.hold && gate.wait && gate.release);
 	pthread_t poller;
-	gate.hold(no_token ? "RATE=200.000000" : "set fps 200.000000");
+	gate.hold(generic_fixture ? "RATE=200.000000" : "set fps 200.000000");
 	CHECK(pthread_create(&poller, NULL, poll_during_control, &gate) == 0);
 	CHECK(write_control(&camera, "genicam.AcquisitionFrameRate", &rate.pod, 0) == 0);
 	CHECK(pthread_join(poller, NULL) == 0);
@@ -359,7 +361,7 @@ static void test_control_pair(const struct spa_handle_factory *factory, const ch
 		char text[8];
 	} on = { trigger, "On" };
 	CHECK(write_control(&camera, "genicam.TriggerMode", &on.pod.pod, 0) == 0);
-	gate.hold(no_token ? "RATE?" : "fps raw");
+	gate.hold(generic_fixture ? "RATE?" : "fps raw");
 	CHECK(pthread_create(&poller, NULL, poll_during_control, &gate) == 0);
 	const struct control_state after = read_controls(&camera, SPA_PARAM_Props);
 	CHECK(pthread_join(poller, NULL) == 0);

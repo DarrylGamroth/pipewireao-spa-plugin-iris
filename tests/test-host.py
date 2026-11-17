@@ -34,7 +34,7 @@ def stop(process):
 def main():
     bindir, client, plugin, installed_plugins, installed_modules, cti = map(Path, sys.argv[1:7])
     control_cti = sys.argv[7] if len(sys.argv) > 7 else None
-    pair_both = len(sys.argv) > 8 and sys.argv[8] == "both"
+    generic_pair = len(sys.argv) > 8 and sys.argv[8] == "both"
     paired = {}
     with TemporaryDirectory(prefix="pwao-iris-") as directory:
         runtime = Path(directory)
@@ -46,8 +46,8 @@ def main():
             "iris-mock-explicit": (second_cti, {"api.iris.buffer-count": 4}),
         }
         if control_cti:
-            paired["iris-mock-auto"] = "CRED2-TEST-001"
-            if pair_both:
+            paired["iris-mock-auto"] = "PRIMARY-TEST-001" if generic_pair else "CRED2-TEST-001"
+            if generic_pair:
                 paired["iris-mock-explicit"] = "ALT-TEST-001"
             for name, serial in paired.items():
                 devices[name][1].update({
