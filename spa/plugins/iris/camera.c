@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <string.h>
 
@@ -133,21 +134,105 @@ static int configure_features(iris_node_map_t *map, const char *controls,
 	return len < 0 || spa_json_next(&root, &value) != 0 ? -EINVAL : 0;
 }
 
-static int read_format(struct iris_camera *camera, iris_node_map_t *map,
-		struct spa_log *log)
+struct image_layout {
+	char pixel_format[64];
+	int64_t width;
+	int64_t height;
+};
+
+static iris_status_t read_layout(iris_node_map_t *map, struct image_layout *layout)
 {
-	char symbol[64];
-	size_t length = sizeof(symbol);
-	int64_t width, height;
+	size_t length = sizeof(layout->pixel_format);
+	iris_status_t status = iris_feature_get_enumeration(map, "PixelFormat",
+			layout->pixel_format, &length);
+	if (status == IRIS_OK)
+		status = iris_feature_get_integer(map, "Width", &layout->width);
+	if (status == IRIS_OK)
+		status = iris_feature_get_integer(map, "Height", &layout->height);
+	return status;
+}
+
+static int open_control_device(struct iris_camera *camera, const struct spa_dict *props,
+		const struct image_layout *capture, struct spa_log *log)
+{
+	const char *producer = property(props, "api.iris.control-producer");
+	const char *serial = property(props, "api.iris.camera-serial");
+	const char *interface = property(props, "api.iris.control-interface-id");
+	const char *device = property(props, "api.iris.control-device-id");
+	struct image_layout control;
+	char actual_serial[256];
+	size_t length = sizeof(actual_serial);
 	iris_status_t status;
 
-	status = iris_feature_get_enumeration(map, "PixelFormat", symbol, &length);
+	if (!producer && !serial && !interface && !device)
+		return 0;
+	if ((interface && (!*interface || !device)) || (device && (!*device || !interface))) {
+		spa_log_error(log, "Iris control endpoint requires both control-interface-id and control-device-id");
+		return -EINVAL;
+	}
+	if (!producer || !*producer || !serial || !*serial ||
+			camera->options.acquisition_control != IRIS_ACQUISITION_STREAM_ONLY ||
+			(!property(props, "api.iris.device-id") &&
+			 !property(props, "api.iris.serial-number"))) {
+		spa_log_error(log, "Iris separate camera control requires a control producer, camera serial, capture endpoint selector, and stream-only acquisition");
+		return -EINVAL;
+	}
+	const iris_device_selector_t selector = {
+		.producer = producer,
+		.interface_id = interface,
+		.device_id = device,
+		.serial_number = device ? NULL : serial,
+	};
+	status = iris_device_open(camera->context, &selector, IRIS_DEVICE_CONTROL,
+			1000, &camera->control_device);
 	if (status == IRIS_OK)
-		status = iris_feature_get_integer(map, "Width", &width);
+		status = iris_device_node_map(camera->control_device, IRIS_REMOTE_DEVICE, &camera->control_map);
 	if (status == IRIS_OK)
-		status = iris_feature_get_integer(map, "Height", &height);
+		status = iris_feature_get_string(camera->control_map, "DeviceSerialNumber",
+				actual_serial, &length);
+	if (status != IRIS_OK) {
+		spa_log_error(log, "Iris cannot open camera control for serial %s", serial);
+		return iris_report_error(log, status);
+	}
+	if (!spa_streq(serial, actual_serial)) {
+		spa_log_error(log, "Iris expected camera serial %s but control port reported %s",
+				serial, actual_serial);
+		return -ENODEV;
+	}
+	/* Keep the control-side transport settings locked while this source owns the device. */
+	iris_feature_info_t info;
+	status = iris_feature_info(camera->control_map, "TLParamsLocked", &info);
+	if (status == IRIS_OK && info.access == IRIS_FEATURE_READ_WRITE) {
+		int64_t locked;
+		status = iris_feature_get_integer(camera->control_map, "TLParamsLocked", &locked);
+		if (status == IRIS_OK && locked == 0) {
+			status = iris_feature_set_integer(camera->control_map, "TLParamsLocked", 1);
+			camera->control_locked = status == IRIS_OK;
+		}
+		if (status != IRIS_OK)
+			return iris_report_error(log, status);
+	} else if (status != IRIS_OK && status != IRIS_NOT_FOUND) {
+		return iris_report_error(log, status);
+	}
+	status = read_layout(camera->control_map, &control);
 	if (status != IRIS_OK)
 		return iris_report_error(log, status);
+	if (control.width != capture->width || control.height != capture->height ||
+			!spa_streq(control.pixel_format, capture->pixel_format)) {
+		spa_log_error(log, "Iris camera %s reports %" PRId64 "x%" PRId64 " %s but capture endpoint reports %" PRId64 "x%" PRId64 " %s",
+				serial, control.width, control.height, control.pixel_format,
+				capture->width, capture->height, capture->pixel_format);
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int set_format(struct iris_camera *camera, const struct image_layout *layout,
+		struct spa_log *log)
+{
+	const int64_t width = layout->width, height = layout->height;
+	const char *symbol = layout->pixel_format;
+
 	if (width <= 0 || height <= 0 || width > INT32_MAX || height > INT32_MAX)
 		return -ERANGE;
 	for (size_t i = 0; i < SPA_N_ELEMENTS(pixel_formats); i++) {
@@ -200,8 +285,14 @@ int iris_camera_open(struct iris_camera *camera, const struct spa_dict *props,
 	status = iris_device_node_map(camera->device, IRIS_REMOTE_DEVICE, &map);
 	if (status != IRIS_OK)
 		return iris_report_error(log, status);
-	if ((res = configure_features(map, property(props, "api.iris.initial-controls"), log)) < 0 ||
-			(res = read_format(camera, map, log)) < 0)
+	if ((res = configure_features(map, property(props, "api.iris.initial-controls"), log)) < 0)
+		return res;
+	struct image_layout layout;
+	status = read_layout(map, &layout);
+	if (status != IRIS_OK)
+		return iris_report_error(log, status);
+	if ((res = set_format(camera, &layout, log)) < 0 ||
+			(res = open_control_device(camera, props, &layout, log)) < 0)
 		return res;
 	status = iris_stream_open(camera->device, stream_index, &camera->stream);
 	return status == IRIS_OK ? 0 : iris_report_error(log, status);
@@ -212,9 +303,24 @@ int iris_camera_close(struct iris_camera *camera, struct spa_log *log)
 	iris_status_t status = IRIS_OK;
 	if (camera->stream != NULL)
 		status = iris_stream_close(&camera->stream);
-	if (status == IRIS_OK && camera->device != NULL)
+	int result = status == IRIS_OK ? 0 : iris_report_error(log, status);
+	if (camera->control_locked) {
+		status = iris_feature_set_integer(camera->control_map, "TLParamsLocked", 0);
+		if (status != IRIS_OK && result == 0)
+			result = iris_report_error(log, status);
+		camera->control_locked = false;
+	}
+	if (camera->control_device != NULL) {
+		status = iris_device_close(&camera->control_device);
+		if (status != IRIS_OK && result == 0)
+			result = iris_report_error(log, status);
+		camera->control_map = NULL;
+	}
+	status = IRIS_OK;
+	if (camera->stream == NULL && camera->device != NULL)
 		status = iris_device_close(&camera->device);
-	if (status == IRIS_OK && camera->context != NULL)
+	if (status == IRIS_OK && camera->device == NULL &&
+			camera->control_device == NULL && camera->context != NULL)
 		status = iris_context_close(&camera->context);
-	return status == IRIS_OK ? 0 : iris_report_error(log, status);
+	return status == IRIS_OK ? result : iris_report_error(log, status);
 }

@@ -1,5 +1,5 @@
 source_test = executable('test-iris-source', 'test-source.c',
-  dependencies: [spa, cc.find_library('dl', required: false)],
+  dependencies: [spa, dependency('threads'), cc.find_library('dl', required: false)],
 )
 test('factory', source_test, args: [plugin.full_path()], depends: plugin)
 mock_cti = get_option('test-mock-cti')
@@ -22,6 +22,32 @@ if mock_cti != ''
   endforeach
 endif
 
+control_cti = get_option('test-control-cti')
+mock_serial = get_option('test-clserial')
+clprotocol = get_option('test-clprotocol')
+control_config = get_option('test-clprotocol-gentl-config')
+control_fixtures = []
+control_env = {'IRIS_FAULT': 'progressive-pool'}
+if control_cti != '' or mock_serial != '' or clprotocol != '' or control_config != ''
+  if mock_cti == '' or control_cti == '' or mock_serial == '' or (clprotocol == '') == (control_config == '')
+    error('Set test-mock-cti, test-control-cti, test-clserial, and either test-clprotocol or test-clprotocol-gentl-config')
+  endif
+  control_fixtures += [{'name': 'cred2', 'args': []}]
+  if control_config == ''
+    control_env += {'CRED2_CL_SERIAL': mock_serial, 'CRED2_CL_PROTOCOL': clprotocol}
+  else
+    control_env += {'CLPROTOCOL_GENTL_SERIAL': mock_serial, 'CLPROTOCOL_GENTL_CONFIG': control_config}
+    control_fixtures += [{'name': 'no-serial-token', 'args': ['no-token']}]
+  endif
+  foreach fixture : control_fixtures
+    test('paired-serial-control-' + fixture['name'], source_test,
+      args: [plugin.full_path(), mock_cti, '--control', control_cti] + fixture['args'],
+      depends: plugin,
+      env: environment(control_env),
+    )
+  endforeach
+endif
+
 host_bindir = get_option('test-pipewireao-bindir')
 if host_bindir != ''
   if mock_cti == ''
@@ -32,14 +58,24 @@ if host_bindir != ''
     dependencies: [spa, pipewire],
   )
   python = import('python').find_installation()
+  host_args = [
+    files('test-host.py'), host_bindir, host_client.full_path(),
+    plugin.full_path(), spa.get_variable(pkgconfig: 'plugindir'),
+    pipewire.get_variable(pkgconfig: 'moduledir'), mock_cti,
+  ]
   test('pipewireao-mock-graph', python,
-    args: [
-      files('test-host.py'), host_bindir, host_client.full_path(),
-      plugin.full_path(), spa.get_variable(pkgconfig: 'plugindir'),
-      pipewire.get_variable(pkgconfig: 'moduledir'), mock_cti,
-    ],
+    args: host_args,
     depends: [plugin, host_client],
     env: environment({'IRIS_FAULT': 'progressive-pool'}),
     timeout: 30,
   )
+  if control_cti != ''
+    paired_args = control_config == '' ? [] : ['both']
+    test('pipewireao-paired-mock-graph', python,
+      args: host_args + [control_cti] + paired_args,
+      depends: [plugin, host_client],
+      env: environment(control_env),
+      timeout: 30,
+    )
+  endif
 endif

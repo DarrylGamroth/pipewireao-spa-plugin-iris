@@ -2,6 +2,7 @@
 #ifndef PIPEWIREAO_IRIS_CAMERA_H
 #define PIPEWIREAO_IRIS_CAMERA_H
 
+#include <stdbool.h>
 #include <iris.h>
 #include <spa/param/video/raw.h>
 #include <spa/support/log.h>
@@ -10,6 +11,9 @@
 struct iris_camera {
 	iris_context_t *context;
 	iris_device_t *device;
+	iris_device_t *control_device;
+	iris_node_map_t *control_map;
+	bool control_locked;
 	iris_stream_t *stream;
 	iris_start_options_t options;
 	struct spa_video_info_raw format;

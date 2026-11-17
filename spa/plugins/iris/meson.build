@@ -1,5 +1,6 @@
 plugin = shared_library('spa-iris',
   'camera.c',
+  'controls.c',
   'source.c',
   dependencies: [spa, iris, dependency('threads')],
   gnu_symbol_visibility: 'hidden',

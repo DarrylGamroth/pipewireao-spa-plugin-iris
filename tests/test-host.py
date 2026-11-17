@@ -32,7 +32,10 @@ def stop(process):
 
 
 def main():
-    bindir, client, plugin, installed_plugins, installed_modules, cti = map(Path, sys.argv[1:])
+    bindir, client, plugin, installed_plugins, installed_modules, cti = map(Path, sys.argv[1:7])
+    control_cti = sys.argv[7] if len(sys.argv) > 7 else None
+    pair_both = len(sys.argv) > 8 and sys.argv[8] == "both"
+    paired = {}
     with TemporaryDirectory(prefix="pwao-iris-") as directory:
         runtime = Path(directory)
         # Load the same mock implementation with independent producer state.
@@ -42,6 +45,22 @@ def main():
             "iris-mock-auto": (cti, {}),
             "iris-mock-explicit": (second_cti, {"api.iris.buffer-count": 4}),
         }
+        if control_cti:
+            paired["iris-mock-auto"] = "CRED2-TEST-001"
+            if pair_both:
+                paired["iris-mock-explicit"] = "ALT-TEST-001"
+            for name, serial in paired.items():
+                devices[name][1].update({
+                    "api.iris.serial-number": "test-serial",
+                    "api.iris.control-producer": control_cti,
+                    "api.iris.camera-serial": serial,
+                    "api.iris.runtime-controls": "[ DeviceSerialNumber AcquisitionFrameRate TriggerMode ]",
+                })
+                if serial == "ALT-TEST-001":
+                    devices[name][1].update({
+                        "api.iris.control-interface-id": "CameraLinkSerial",
+                        "api.iris.control-device-id": "CLSerial-1",
+                    })
         objects = [
             {
                 "factory": "spa-node-factory",
@@ -84,11 +103,42 @@ def main():
             "PIPEWIREAO_SPA_PLUGIN_DIR": f"{plugin.parents[1]}:{installed_plugins}",
         }
 
+        if control_cti:
+            env.pop("CLP_XML_PATH", None)
+            env.pop("CRED2_SIM_HARDWARE_ID", None)
+            env.pop("CRED2_SIM_NO_CAMERA", None)
+            env["CRED2_SIM_CROP_COLUMNS"] = "0 1"
+
         def tool(name, *arguments):
             return subprocess.run(
                 [bindir / name, *arguments], env=env, text=True, timeout=2,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
+
+        def check_live_controls(name, serial):
+            snapshot = json.loads(tool("pwao-dump").stdout)
+            node, = [
+                obj for obj in snapshot
+                if obj["type"].endswith(":Node")
+                and obj.get("info", {}).get("props", {}).get("node.name") == name
+            ]
+            if node["info"]["state"] != "running":
+                raise RuntimeError("paired source is not running")
+            node_id = str(node["id"])
+            before = tool("pwao-cli", "enum-params", node_id, "Props")
+            if before.returncode or any(value not in before.stdout for value in (
+                f'"{serial}"', 'Double 120.000000', '"Off"'
+            )):
+                raise RuntimeError(before.stdout)
+            for payload in ('{ params = [ "genicam.AcquisitionFrameRate" 200.0 ] }',
+                            '{ params = [ "genicam.TriggerMode" "On" ] }'):
+                result = tool("pwao-cli", "set-param", node_id, "Props", payload)
+                if result.returncode:
+                    raise RuntimeError(result.stdout)
+            after = tool("pwao-cli", "enum-params", node_id, "Props")
+            if after.returncode or 'Double 200.000000' not in after.stdout or '"On"' not in after.stdout:
+                raise RuntimeError(after.stdout)
+            print(f"Verified feature writes and readback for {serial} on the running PipeWireAO source")
 
         processes = []
         with (runtime / "daemon.log").open("w+") as log:
@@ -125,6 +175,8 @@ def main():
                             poll.unregister(key.fileobj)
                 if max(start for start, _ in intervals) >= min(end for _, end in intervals):
                     raise RuntimeError("the two graph streams did not overlap")
+                for name, serial in paired.items():
+                    check_live_controls(name, serial)
                 for process in processes:
                     stop(process)
                     if process.returncode:

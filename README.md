@@ -48,8 +48,7 @@ production deployment.
 With no device selector, the producer must discover exactly one camera. Initial
 controls support selector-dependent settings by listing the selector first.
 Earlier writes stay applied if a later write fails. Set geometry and pixel
-format here, then recreate the node to change them. This version exposes
-startup controls through configuration.
+format here, then recreate the node to change them.
 
 If an explicit buffer count is below the producer minimum, starting the node
 returns `-ERANGE` and logs both the requested count and the producer minimum.
@@ -69,6 +68,52 @@ The plugin creates no worker threads and does no explicit heap allocation in
 its process callback. The callback polls for at most one completion with a
 zero timeout, then copies and releases it. The CTI's poll and requeue
 implementation still determines the producer-side cost.
+
+## Pair a CLProtocol control CTI with a Grablink source
+
+In the source's `args` block, select the Grablink interface and device
+reported by `iris-gentl info`. Supply the physical C-RED2 serial advertised
+by the control CTI separately.
+
+```ini
+api.iris.producer = "/opt/euresys/egrabber/lib/x86_64/grablink.cti"
+api.iris.interface-id = "<Grablink interface ID>"
+api.iris.device-id = "<Grablink device ID>"
+api.iris.acquisition-control = "stream-only"
+
+api.iris.control-producer = "/path/to/clprotocol-gentl.cti"
+api.iris.camera-serial = "<physical C-RED2 serial>"
+# Select the control endpoint by exact IDs if discovery cannot match the physical serial.
+# api.iris.control-interface-id = "CameraLinkSerial"
+# api.iris.control-device-id = "CLSerial-0"
+api.iris.runtime-controls = [ "DeviceSerialNumber" "AcquisitionFrameRate" "ExposureTime" ]
+```
+
+Set `CLPROTOCOL_GENTL_SERIAL` and `CLPROTOCOL_GENTL_CONFIG` in the daemon
+environment as described by the standalone producer. The configuration
+pairs that serial with the specified capture endpoint. Check that the
+camera is cabled to that endpoint. When both control IDs are set, the
+node opens that exact control endpoint. Otherwise it selects by the
+serial reported by GenTL discovery. In either mode the plugin verifies
+the control CTI's remote `DeviceSerialNumber` and checks that the camera
+and receiver agree on
+`Width`, `Height`, and `PixelFormat` before it opens the stream. Configure
+the camera and receiver geometry before creating the node. The capture
+endpoint's `api.iris.initial-controls` can configure its remote node map.
+
+The optional `api.iris.runtime-controls` list exposes named scalar features
+on the control CTI through `SPA_PARAM_PropInfo` and `SPA_PARAM_Props`.
+Values appear under `genicam.<FeatureName>`. Write one value at a time.
+GenApi enumerations use their symbolic strings. Select features that are
+safe to change during acquisition. The source holds the control-side
+`TLParamsLocked` while it owns the camera when the feature supports writes.
+Serial I/O runs on the control thread, independently of polling.
+
+```sh
+pwao-cli enum-params "$node_id" Props
+pwao-cli set-param "$node_id" Props '{ params = [ "genicam.AcquisitionFrameRate" 200.0 ] }'
+pwao-cli enum-params "$node_id" Props
+```
 
 ## Simulator tests
 
@@ -92,3 +137,23 @@ Debian 13 with the Iris v0.2.4 package and PipeWireAO v4.0.4.
 
 The daemon test gets its base configuration from the install tree or from
 `PIPEWIREAO_CONFIG_DIR` when set.
+
+To run the paired regression, build the standalone CLProtocol GenTL
+producer with its simulator tests enabled. Use its CTI, mock CLSerial
+library, and generated port assignments. The Iris in-tree CTI supplies
+the simulated capture endpoints.
+
+```sh
+meson configure build \
+  -Dtest-control-cti=/path/to/clprotocol-gentl.cti \
+  -Dtest-clserial=/path/to/tests/libmock-clserial.so \
+  -Dtest-clprotocol-gentl-config=/path/to/tests/ports.tsv
+meson test -C build --print-errorlogs
+```
+
+The paired tests verify frame delivery during blocked serial reads and
+writes with the C-RED2 driver and the second mock driver, whose CLProtocol
+DeviceID omits the serial token. They reject mismatched hardware serials
+and image layouts. With `test-pipewireao-bindir` set, a private PipeWireAO
+daemon runs both paired sources and exercises live writes and readback. Physical Grablink capture with the
+serial channel open still needs hardware qualification.

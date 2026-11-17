@@ -16,6 +16,7 @@
 #include <spa/support/plugin.h>
 
 #include "camera.h"
+#include "controls.h"
 
 #define MAX_BUFFERS 32
 
@@ -25,6 +26,8 @@ struct source {
 	struct spa_hook_list hooks;
 	struct spa_log *log;
 	struct iris_camera camera;
+	struct iris_controls controls;
+	struct spa_param_info node_params[2];
 	pthread_mutex_t lock;
 	struct spa_port_info port_info;
 	struct spa_param_info params[5];
@@ -56,7 +59,7 @@ static int add_listener(void *object, struct spa_hook *listener,
 {
 	struct source *self = object;
 	struct spa_hook_list save;
-	const struct spa_node_info info = {
+	struct spa_node_info info = {
 		.max_output_ports = 1,
 		.change_mask = SPA_NODE_CHANGE_MASK_FLAGS | SPA_NODE_CHANGE_MASK_PROPS,
 		.flags = SPA_NODE_FLAG_RT | SPA_NODE_FLAG_POLL_DRIVER,
@@ -64,12 +67,43 @@ static int add_listener(void *object, struct spa_hook *listener,
 	};
 	struct spa_port_info port = self->port_info;
 
+	if (self->controls.count) {
+		info.change_mask |= SPA_NODE_CHANGE_MASK_PARAMS;
+		info.params = self->node_params;
+		info.n_params = SPA_N_ELEMENTS(self->node_params);
+	}
 	port.change_mask = SPA_PORT_CHANGE_MASK_FLAGS | SPA_PORT_CHANGE_MASK_PARAMS;
 	spa_hook_list_isolate(&self->hooks, &save, listener, events, data);
 	spa_node_emit_info(&self->hooks, &info);
 	spa_node_emit_port_info(&self->hooks, SPA_DIRECTION_OUTPUT, 0, &port);
 	spa_hook_list_join(&self->hooks, &save);
 	return 0;
+}
+
+/* Node parameters run on the control thread. Serial I/O does not take the frame lock. */
+static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
+		uint32_t num, const struct spa_pod *filter)
+{
+	struct source *self = object;
+	return iris_controls_enum(&self->controls, &self->hooks, seq, id, start, num, filter);
+}
+
+static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa_pod *param)
+{
+	struct source *self = object;
+	int res = iris_controls_set(&self->controls, id, flags, param, self->log);
+	if (res > 0) {
+		self->node_params[1].flags ^= SPA_PARAM_INFO_SERIAL;
+		const struct spa_node_info info = {
+			.max_output_ports = 1,
+			.change_mask = SPA_NODE_CHANGE_MASK_PARAMS,
+			.params = self->node_params,
+			.n_params = SPA_N_ELEMENTS(self->node_params),
+		};
+		spa_node_emit_info(&self->hooks, &info);
+		res = 0;
+	}
+	return res;
 }
 
 static int set_callbacks(void *object SPA_UNUSED,
@@ -427,6 +461,8 @@ static const struct spa_node_methods methods = {
 	SPA_VERSION_NODE_METHODS,
 	.add_listener = add_listener,
 	.set_callbacks = set_callbacks,
+	.enum_params = enum_params,
+	.set_param = set_param,
 	.send_command = send_command,
 	.port_enum_params = port_enum_params,
 	.port_set_param = port_set_param,
@@ -450,6 +486,7 @@ static int clear(struct spa_handle *handle)
 	struct source *self = (struct source *)handle;
 	pthread_mutex_lock(&self->lock);
 	int res = stop(self);
+	iris_controls_clear(&self->controls);
 	int close_res = iris_camera_close(&self->camera, self->log);
 	pthread_mutex_unlock(&self->lock);
 	pthread_mutex_destroy(&self->lock);
@@ -487,7 +524,12 @@ static int init(const struct spa_handle_factory *factory SPA_UNUSED,
 	atomic_init(&self->leased, 0);
 	if ((res = pthread_mutex_init(&self->lock, NULL)) != 0)
 		return -res;
-	if ((res = iris_camera_open(&self->camera, props, self->log)) < 0)
+	self->node_params[0] = SPA_PARAM_INFO(SPA_PARAM_PropInfo, SPA_PARAM_INFO_READ);
+	self->node_params[1] = SPA_PARAM_INFO(SPA_PARAM_Props, SPA_PARAM_INFO_READWRITE);
+	res = iris_camera_open(&self->camera, props, self->log);
+	if (res == 0)
+		res = iris_controls_init(&self->controls, self->camera.control_map, props, self->log);
+	if (res < 0)
 		(void)clear(handle);
 	return res;
 }

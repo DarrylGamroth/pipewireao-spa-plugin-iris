@@ -2,3 +2,7 @@ option('iris-prefix', type: 'string', value: '/usr/local', description: 'Install
 option('iris-libdir', type: 'string', value: '', description: 'Iris shared library directory (defaults to iris-prefix/lib)')
 option('test-mock-cti', type: 'string', value: '', description: 'Iris in-tree mock CTI path')
 option('test-pipewireao-bindir', type: 'string', value: '', description: 'Installed PipeWireAO executable directory for the optional daemon test')
+option('test-control-cti', type: 'string', value: '', description: 'Control-only GenTL producer for paired mock tests')
+option('test-clserial', type: 'string', value: '', description: 'C-RED2 CLSerial simulator library for the paired control test')
+option('test-clprotocol', type: 'string', value: '', description: 'C-RED2 CLProtocol provider library for the paired control test')
+option('test-clprotocol-gentl-config', type: 'string', value: '', description: 'Generic CLProtocol GenTL simulator port assignments')
