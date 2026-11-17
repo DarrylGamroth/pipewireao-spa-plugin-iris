@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: DarrylGamroth/iris-gentl
-          ref: 738b041b6fb789e7d369c007dcb658674d08f5d8 # v0.2.4
+          ref: f8cab7fc205441336049a090b50b074b3cfc569d # v0.2.4
           path: iris-source
           persist-credentials: false
 
@@ -45,7 +45,7 @@ jobs:
           cd "$RUNNER_TEMP"
           curl --fail --silent --show-error --location --retry 3 --output "$IRIS_DEB" \
             "https://github.com/DarrylGamroth/iris-gentl/releases/download/v0.2.4/$IRIS_DEB"
-          printf '%s  %s\n' f943dadcad25de4b6f313c12d546e79981e1d6e3903d540b5bd1985bded563b5 "$IRIS_DEB" \
+          printf '%s  %s\n' 8051756af554c91c114441b97401722b726566101f07a2a1b0be3e51bf1858fa "$IRIS_DEB" \
             | sha256sum --strict --check -
           apt-get install -y --no-install-recommends "./$IRIS_DEB"
           test "$(dpkg-query -W -f='${Version}' iris-gentl)" = 0.2.4
