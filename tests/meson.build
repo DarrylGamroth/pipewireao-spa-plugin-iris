@@ -94,3 +94,13 @@ if host_bindir != ''
     )
   endif
 endif
+
+controls_test = executable('test-iris-controls',
+  ['test-controls.c', '../spa/plugins/iris/controls.c', '../spa/plugins/iris/camera.c'],
+  include_directories: include_directories('../spa/plugins/iris'),
+  dependencies: [spa, iris],
+)
+test('status-mapping', controls_test)
+if mock_cti != ''
+  test('scalar-controls', controls_test, args: [mock_cti], env: {'IRIS_FAULT': 'nodes'})
+endif

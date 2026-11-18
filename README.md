@@ -1,5 +1,8 @@
 # Iris GenTL source for PipeWireAO
 
+[![CI](https://github.com/DarrylGamroth/pipewireao-spa-plugin-iris/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DarrylGamroth/pipewireao-spa-plugin-iris/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-Codecov-blue)](https://app.codecov.io/github/DarrylGamroth/pipewireao-spa-plugin-iris)
+
 `api.iris.source` is a PipeWireAO SPA video source. Each node opens one device
 and one GenTL data stream through Iris GenTL. Create multiple nodes to use
 multiple devices or producers in one daemon.
@@ -201,3 +204,23 @@ DeviceID omits the serial token. They reject mismatched hardware serials
 and image layouts. With `test-pipewireao-bindir` set, a private PipeWireAO
 daemon runs both paired sources and exercises live writes and readback. Physical Grablink capture with the
 serial channel open still needs hardware qualification.
+
+## CI and coverage
+
+GitHub Actions builds and tests against PipeWireAO 4.0.5 on Debian 13.
+The Iris factory, scalar and stacked mock capture, held-buffer lifetime, and
+paired CLProtocol controls in a PipeWireAO graph.
+
+CI requires more than 90% line coverage for the code compiled in this
+configuration. The workflow saves the LCOV report as an artifact and uses
+GitHub OIDC to upload coverage to Codecov. Fork pull requests run the
+same local gate.
+
+After configuring the fixture paths above, enable Meson coverage with
+`-Db_coverage=true` and run both the scalar and stacked test configurations.
+
+Collect a native coverage report from that build.
+
+```sh
+gcovr --root . --lcov build-coverage/coverage-c.info --print-summary build-coverage
+```
