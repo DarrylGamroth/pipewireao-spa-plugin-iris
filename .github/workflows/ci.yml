@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,7 +16,10 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: docker.io/library/debian@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 # Debian 13
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         shell: bash
@@ -27,7 +31,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates cmake curl g++ git libarchive-dev libxml2-dev meson ninja-build pkgconf python3
+            ca-certificates cmake curl g++ gcovr git gnupg libarchive-dev libxml2-dev meson ninja-build pkgconf python3
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -38,6 +42,13 @@ jobs:
           repository: DarrylGamroth/iris-gentl
           ref: 4b59b46496de4ba334f9647b20a98ced9ee3666e
           path: iris-source
+          persist-credentials: false
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: DarrylGamroth/clprotocol-gentl
+          ref: 86dc386d5ec6cc39ceba9ae7ed2e8882fb8fbe81
+          path: clprotocol-source
           persist-credentials: false
 
       - name: Install and verify Iris v0.2.4 and PipeWireAO v4.0.5
@@ -65,15 +76,67 @@ jobs:
             -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build "$RUNNER_TEMP/iris-mock" --target iris-test-cti --parallel
 
+      - name: Build the paired-control fixture
+        run: |
+          cmake -G Ninja -S clprotocol-source -B "$RUNNER_TEMP/control" -DBUILD_TESTING=ON
+          cmake --build "$RUNNER_TEMP/control" --parallel
+
       - name: Test scalar and stacked capture and held-buffer lifetime
+        id: tests
         run: |
           pipewireao="$RUNNER_TEMP/pipewireao"
           export PKG_CONFIG_PATH="$pipewireao/lib/pkgconfig"
           export LD_LIBRARY_PATH="$pipewireao/lib"
-          meson setup "$RUNNER_TEMP/plugin" -Dwerror=true -Dtest-held-buffer=true \
+          meson setup build-coverage -Db_coverage=true -Dwerror=true -Dtest-held-buffer=true \
             -Diris-prefix=/usr -Diris-libdir=/usr/lib/x86_64-linux-gnu \
             -Dtest-mock-cti="$RUNNER_TEMP/iris-mock/iris-test-cti.cti" \
-            -Dtest-pipewireao-bindir="$pipewireao/bin"
-          meson compile -C "$RUNNER_TEMP/plugin"
-          meson test -C "$RUNNER_TEMP/plugin" --print-errorlogs
-          IRIS_MOCK_STACKED_INFO=1 meson test -C "$RUNNER_TEMP/plugin" --print-errorlogs
+            -Dtest-pipewireao-bindir="$pipewireao/bin" \
+            -Dtest-control-cti="$RUNNER_TEMP/control/clprotocol-gentl.cti" \
+            -Dtest-clserial="$RUNNER_TEMP/control/tests/libmock-clserial.so" \
+            -Dtest-clprotocol-gentl-config="$RUNNER_TEMP/control/tests/ports.tsv"
+          meson compile -C build-coverage
+          meson test -C build-coverage --print-errorlogs
+          IRIS_MOCK_STACKED_INFO=1 meson test -C build-coverage --print-errorlogs
+
+      - name: Collect native coverage
+        run: |
+          gcovr --root . --lcov build-coverage/coverage-c.info --print-summary build-coverage
+          sed -i "s|^SF:${PWD}/|SF:|" build-coverage/coverage-c.info
+          grep -Eq '^LF:[1-9]' build-coverage/coverage-c.info
+
+      - name: Save coverage reports and test logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-and-coverage
+          path: |
+            build-coverage/coverage-*.info
+            build-coverage/meson-logs/testlog.txt
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('build-coverage/coverage-*.info') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          use_oidc: true
+          disable_search: true
+          files: build-coverage/coverage-c.info
+          fail_ci_if_error: true
+
+      - name: Require more than 90% line coverage
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
+        run: |
+          for report in build-coverage/coverage-c.info; do
+            awk -F: '
+              $1 == "LF" { found += $2 }
+              $1 == "LH" { hit += $2 }
+              END {
+                if (found == 0) {
+                  print FILENAME ": empty line coverage report"
+                  exit 1
+                }
+                printf "%s: %.2f%% line coverage (%d/%d)\n", FILENAME, 100 * hit / found, hit, found
+                exit !(100 * hit > 90 * found)
+              }
+            ' "$report" || failed=1
+          done
+          exit "${failed:-0}"

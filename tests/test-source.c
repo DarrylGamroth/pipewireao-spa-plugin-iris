@@ -13,6 +13,7 @@
 #include <spa/node/utils.h>
 #include <spa/param/video/format-utils.h>
 #include <spa/param/props.h>
+#include <spa/param/buffers.h>
 #include <spa/pod/parser.h>
 #include <spa/support/log.h>
 #include <spa/support/plugin.h>
@@ -92,12 +93,39 @@ static void open_capture(struct capture *capture, const struct spa_handle_factor
 	CHECK(res == 0);
 	CHECK(spa_handle_get_interface(capture->handle, SPA_TYPE_INTERFACE_Node, &iface) == 0);
 	node = capture->node = iface;
+	void *unsupported;
+	CHECK(spa_handle_get_interface(capture->handle, SPA_TYPE_INTERFACE_Log, &unsupported) == -ENOENT);
+	static const struct spa_node_callbacks callbacks = { SPA_VERSION_NODE_CALLBACKS };
+	CHECK(spa_node_set_callbacks(node, &callbacks, capture) == 0);
+	struct spa_command start = SPA_NODE_COMMAND_INIT(SPA_NODE_COMMAND_Start);
+	struct spa_command flush = SPA_NODE_COMMAND_INIT(SPA_NODE_COMMAND_Flush);
+	CHECK(spa_node_send_command(node, &start) == -EIO);
+	CHECK(spa_node_send_command(node, &flush) == -ENOTSUP);
+	CHECK(spa_node_port_reuse_buffer(node, 1, 0) == -EINVAL);
+	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
+			SPA_PARAM_Props, 0, 1, NULL) == -ENOENT);
+	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
+			SPA_PARAM_Format, 1, 1, NULL) == 0);
+	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
+			SPA_PARAM_Format, 0, 1, NULL) == 0);
+	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
+			SPA_PARAM_Buffers, 0, 1, NULL) == 0);
+	CHECK(spa_node_port_set_param(node, SPA_DIRECTION_INPUT, 0, SPA_PARAM_Format, 0, NULL) == -EINVAL);
+	CHECK(spa_node_port_set_param(node, SPA_DIRECTION_OUTPUT, 0, SPA_PARAM_Props, 0, NULL) == -ENOENT);
+	CHECK(spa_node_port_use_buffers(node, SPA_DIRECTION_OUTPUT, 0, 0, NULL, 1) == -EINVAL);
+	CHECK(spa_node_port_set_io(node, SPA_DIRECTION_OUTPUT, 0, SPA_IO_Clock, NULL, 0) == -ENOENT);
+	CHECK(spa_node_port_set_io(node, SPA_DIRECTION_OUTPUT, 0, SPA_IO_Buffers,
+			&capture->io, sizeof(capture->io) - 1) == -EINVAL);
 	CHECK(spa_node_add_listener(node, &listener, &events, capture) == 0);
 	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
 			SPA_PARAM_EnumFormat, 0, 1, NULL) == 0);
 	spa_hook_remove(&listener);
 	CHECK(capture->format.format == expected_format);
 	CHECK(capture->format.size.width > 0 && capture->format.size.height > 0);
+	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
+			SPA_PARAM_Meta, 0, 1, NULL) == 0);
+	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
+			SPA_PARAM_IO, 0, 1, NULL) == 0);
 	struct spa_video_info_raw wrong = capture->format;
 	wrong.size.width++;
 	const struct spa_pod *param = spa_format_video_raw_build(&builder, SPA_PARAM_Format, &wrong);
@@ -106,6 +134,8 @@ static void open_capture(struct capture *capture, const struct spa_handle_factor
 	spa_pod_builder_init(&builder, pod_memory, sizeof(pod_memory));
 	param = spa_format_video_raw_build(&builder, SPA_PARAM_Format, &capture->format);
 	CHECK(spa_node_port_set_param(node, SPA_DIRECTION_OUTPUT, 0, SPA_PARAM_Format, 0, param) == 0);
+	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
+			SPA_PARAM_Buffers, 0, 1, NULL) == 0);
 
 	uint32_t bpp = expected_format == SPA_VIDEO_FORMAT_GRAY8 ? 1 : 2;
 	uint32_t size = capture->format.size.width * capture->format.size.height * bpp;
@@ -122,6 +152,10 @@ static void open_capture(struct capture *capture, const struct spa_handle_factor
 		buffer->buffer = (struct spa_buffer) { 1, 1, &buffer->meta, &buffer->data };
 		capture->buffers[i] = &buffer->buffer;
 	}
+	CHECK(spa_node_port_use_buffers(node, SPA_DIRECTION_OUTPUT, 0,
+			SPA_NODE_BUFFERS_FLAG_ALLOC, capture->buffers, 2) == -ENOTSUP);
+	CHECK(spa_node_port_use_buffers(node, SPA_DIRECTION_OUTPUT, 0, 0,
+			capture->buffers, 1) == -EINVAL);
 	capture->storage[0].data.maxsize--;
 	CHECK(spa_node_port_use_buffers(node, SPA_DIRECTION_OUTPUT, 0, 0,
 			capture->buffers, SPA_N_ELEMENTS(capture->buffers)) == -EINVAL);
@@ -131,6 +165,8 @@ static void open_capture(struct capture *capture, const struct spa_handle_factor
 	capture->io = (struct spa_io_buffers) { SPA_STATUS_NEED_DATA, SPA_ID_INVALID };
 	CHECK(spa_node_port_set_io(node, SPA_DIRECTION_OUTPUT, 0, SPA_IO_Buffers,
 			&capture->io, sizeof(capture->io)) == 0);
+	CHECK(spa_node_port_use_buffers(node, SPA_DIRECTION_OUTPUT, 0, 0,
+			capture->buffers, SPA_N_ELEMENTS(capture->buffers)) == -EBUSY);
 }
 
 static int command(struct capture *capture, uint32_t id)
@@ -284,7 +320,11 @@ static void check_control_init_failure(const struct spa_handle_factory *factory,
 {
 	struct spa_handle *handle = calloc(1, spa_handle_factory_get_size(factory, props));
 	CHECK(handle);
-	CHECK(spa_handle_factory_init(factory, handle, props, NULL, 0) == expected);
+	int actual = spa_handle_factory_init(factory, handle, props, NULL, 0);
+	if (actual != expected)
+		fprintf(stderr, "Initialization returned %d, expected %d for %s\n",
+				actual, expected, props->items[props->n_items - 1].key);
+	CHECK(actual == expected);
 	free(handle);
 }
 
@@ -373,6 +413,46 @@ static void test_control_pair(const struct spa_handle_factory *factory, const ch
 			serial, camera.frames);
 }
 
+static void test_camera_properties(const struct spa_handle_factory *factory, const char *producer)
+{
+	static const struct { const char *key; const char *value; int status; } cases[] = {
+		{ "api.iris.acquisition-control", "invalid", -EINVAL },
+		{ "api.iris.stream-index", "bad", -EINVAL },
+		{ "api.iris.buffer-count", "0", -EINVAL },
+		{ "api.iris.device-id", "must-have-interface", -EINVAL },
+		{ "api.iris.serial-number", "unknown-serial", -ENOENT },
+		{ "api.iris.initial-controls", "Width", -EINVAL },
+		{ "api.iris.initial-controls", "[ [ Width ] ]", -EINVAL },
+		{ "api.iris.initial-controls", "[ Width ]", -EINVAL },
+		{ "api.iris.initial-controls", "[ NotAFeature 20 ]", -ENOENT },
+		{ "api.iris.runtime-controls", "[ Width ]", -EINVAL },
+		{ "api.iris.camera-serial", "control-producer-required", -EINVAL },
+	};
+	struct spa_dict_item items[] = { { "api.iris.producer", producer }, { 0 } };
+	const struct spa_dict props = SPA_DICT_INIT(items, SPA_N_ELEMENTS(items));
+
+	for (size_t i = 0; i < SPA_N_ELEMENTS(cases); i++) {
+		items[1] = SPA_DICT_ITEM_INIT(cases[i].key, cases[i].value);
+		check_control_init_failure(factory, &props, cases[i].status);
+	}
+	CHECK(setenv("IRIS_FAULT", "nodes", 1) == 0);
+	const struct spa_dict discovery = SPA_DICT_INIT(items, 1);
+	check_control_init_failure(factory, &discovery, -ENOTUNIQ);
+	const struct spa_dict_item no_layout_items[] = {
+		{ "api.iris.producer", producer },
+		{ "api.iris.interface-id", "test-interface" },
+		{ "api.iris.device-id", "test-device" },
+	};
+	const struct spa_dict no_layout = SPA_DICT_INIT_ARRAY(no_layout_items);
+	check_control_init_failure(factory, &no_layout, -ENOENT);
+	CHECK(setenv("IRIS_FAULT", "progressive-pool", 1) == 0);
+
+	items[1] = SPA_DICT_ITEM_INIT("api.iris.initial-controls", "[ TriggerMode Off ]");
+	struct capture configured = { 0 };
+	open_capture(&configured, factory, &props, SPA_VIDEO_FORMAT_GRAY16_LE);
+	close_capture(&configured);
+}
+
 int main(int argc, char **argv)
 {
 	const struct spa_handle_factory *factory = NULL;
@@ -386,6 +466,12 @@ int main(int argc, char **argv)
 		dlsym(library, SPA_HANDLE_FACTORY_ENUM_FUNC_NAME);
 	CHECK(enumerate != NULL && enumerate(&factory, &index) == 1);
 	CHECK(strcmp(factory->name, "api.iris.source") == 0 && enumerate(&factory, &index) == 0);
+	const struct spa_interface_info *interface;
+	uint32_t interface_index = 0;
+	CHECK(factory->enum_interface_info(factory, &interface, &interface_index) == 1);
+	CHECK(strcmp(interface->type, SPA_TYPE_INTERFACE_Node) == 0);
+	CHECK(factory->enum_interface_info(factory, &interface, &interface_index) == 0);
+	CHECK(enumerate(NULL, &index) == -EINVAL);
 	struct spa_handle *empty = calloc(1, spa_handle_factory_get_size(factory, NULL));
 	CHECK(empty != NULL);
 	CHECK(spa_handle_factory_init(factory, empty, NULL, NULL, 0) == -EINVAL);
@@ -402,6 +488,8 @@ int main(int argc, char **argv)
 		};
 		static const uint8_t pixels[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
 		const struct spa_dict properties = SPA_DICT_INIT(props, argc >= 4 ? 3 : 2);
+		if (argc == 3)
+			test_camera_properties(factory, argv[2]);
 		if (argc == 5) {
 			struct capture rejected = { 0 };
 			props[2].value = argv[4];
@@ -426,6 +514,12 @@ int main(int argc, char **argv)
 				CHECK(memcmp(buffer->data.data, pixels, sizeof(pixels)) == 0);
 			}
 			/* Keep one SPA buffer leased while requesting another frame. */
+			CHECK(command(&mock, SPA_NODE_COMMAND_Start) == 0);
+			CHECK(spa_node_port_set_param(mock.node, SPA_DIRECTION_OUTPUT, 0,
+					SPA_PARAM_Format, 0, NULL) == -EBUSY);
+			CHECK(spa_node_port_use_buffers(mock.node, SPA_DIRECTION_OUTPUT, 0, 0,
+					NULL, 0) == -EBUSY);
+			CHECK(mock.io.status == SPA_STATUS_NEED_DATA);
 			const uint32_t held_id = mock.io.buffer_id;
 			const struct graph_buffer *held = &mock.storage[held_id];
 			const uint64_t sequence = held->header.seq;
@@ -433,11 +527,28 @@ int main(int argc, char **argv)
 			CHECK(read_frame(&mock));
 			CHECK(mock.io.buffer_id != held_id && held->header.seq == sequence);
 			CHECK(memcmp(held->data.data, pixels, sizeof(pixels)) == 0);
+			const uint32_t second_id = mock.io.buffer_id;
+			mock.io.buffer_id = SPA_ID_INVALID;
+			mock.io.status = SPA_STATUS_NEED_DATA;
+			CHECK(spa_node_process(mock.node) == SPA_STATUS_OK);
+			CHECK(mock.io.buffer_id == SPA_ID_INVALID);
+			CHECK(spa_node_port_reuse_buffer(mock.node, 0, second_id) == 0);
 			CHECK(spa_node_port_reuse_buffer(mock.node, 0, held_id) == 0);
 			CHECK(command(&mock, SPA_NODE_COMMAND_Pause) == 0);
 			CHECK(spa_node_process(mock.node) == SPA_STATUS_OK);
 		}
-		printf("Iris mock: %u frames across two acquisition cycles\n", mock.frames);
+		CHECK(command(&mock, SPA_NODE_COMMAND_Start) == 0);
+		mock.io.status = SPA_STATUS_NEED_DATA;
+		mock.io.buffer_id = SPA_ID_INVALID;
+		for (uint32_t i = 0; i < SPA_N_ELEMENTS(mock.storage); i++)
+			mock.storage[i].data.maxsize--;
+		CHECK(spa_node_process(mock.node) == SPA_STATUS_OK);
+		CHECK(mock.io.buffer_id == SPA_ID_INVALID && mock.io.status == SPA_STATUS_NEED_DATA);
+		for (uint32_t i = 0; i < SPA_N_ELEMENTS(mock.storage); i++)
+			mock.storage[i].data.maxsize++;
+		CHECK(read_frame(&mock));
+		CHECK(mock.storage[mock.io.buffer_id].header.flags & SPA_META_HEADER_FLAG_DISCONT);
+		printf("Iris mock: %u frames including recovery from an undersized destination\n", mock.frames);
 		close_capture(&mock);
 	}
 	CHECK(dlclose(library) == 0);
