@@ -69,6 +69,17 @@ if host_bindir != ''
     env: environment({'IRIS_FAULT': 'progressive-pool'}),
     timeout: 30,
   )
+  if get_option('test-held-buffer')
+    test('pipewireao-held-buffer', python,
+      args: host_args,
+      depends: [plugin, host_client],
+      env: environment({
+        'IRIS_FAULT': 'progressive-pool',
+        'IRIS_SPA_TEST_HELD_BUFFER': '1',
+      }),
+      timeout: 30,
+    )
+  endif
   if control_cti != ''
     paired_args = control_config == '' ? [] : ['both']
     test('pipewireao-paired-mock-graph', python,

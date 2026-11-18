@@ -2,11 +2,22 @@
 #include <inttypes.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <pipewire/pipewire.h>
 #include <spa/buffer/meta.h>
 #include <spa/param/buffers.h>
 #include <spa/param/video/format-utils.h>
+
+struct held_buffer {
+	struct pw_buffer *buffer;
+	uint8_t pixels[16];
+	struct spa_chunk chunk;
+	struct spa_meta_header header;
+	uint32_t until_frame;
+	bool saw_different_pixels;
+};
 
 struct capture {
 	struct pw_main_loop *loop;
@@ -18,6 +29,9 @@ struct capture {
 	int64_t last_pts;
 	bool failed;
 	bool reported;
+	bool verify_hold;
+	bool hold_verified;
+	struct held_buffer held;
 };
 
 static void done(struct capture *capture, const char *error)
@@ -33,6 +47,37 @@ static void state_changed(void *data, enum pw_stream_state old SPA_UNUSED,
 {
 	if (state == PW_STREAM_STATE_ERROR)
 		done(data, error ? error : "stream error");
+}
+
+static bool verify_held_buffer(struct capture *capture)
+{
+	struct held_buffer *held = &capture->held;
+	const struct spa_buffer *buffer = held->buffer->buffer;
+	const struct spa_data *image = buffer->datas;
+	const struct spa_meta_header *header = spa_buffer_find_meta_data(buffer,
+			SPA_META_Header, sizeof(*header));
+
+	if (buffer->n_datas != 1 || !image || !image->data || !image->chunk || !header) {
+		done(capture, "a dequeued buffer lost its image or metadata");
+		return false;
+	}
+	if (memcmp(held->pixels, image->data, sizeof(held->pixels))) {
+		done(capture, "dequeued buffer pixels changed before return");
+		return false;
+	}
+	if (memcmp(&held->chunk, image->chunk, sizeof(held->chunk)) ||
+			memcmp(&held->header, header, sizeof(held->header))) {
+		done(capture, "dequeued buffer metadata changed before return");
+		return false;
+	}
+	return true;
+}
+
+static void report_capture(const struct capture *capture)
+{
+	printf("%s %u %" PRId64 " %" PRId64 "\n", capture->name,
+			capture->frames, capture->first_pts, capture->last_pts);
+	fflush(stdout);
 }
 
 static void process(void *data)
@@ -58,16 +103,51 @@ static void process(void *data)
 			capture->sequence = header->seq;
 			capture->frames++;
 		}
+		struct held_buffer *held = &capture->held;
+		if (held->buffer == received) {
+			done(capture, "a held buffer was dequeued again");
+			return;
+		}
+		if (valid && capture->verify_hold && !held->buffer && !capture->hold_verified) {
+			if (chunk->size != sizeof(held->pixels)) {
+				done(capture, "unexpected image size in held-buffer fixture");
+				return;
+			}
+			held->buffer = received;
+			memcpy(held->pixels, image->data, sizeof(held->pixels));
+			memcpy(&held->header, header, sizeof(held->header));
+			memcpy(&held->chunk, chunk, sizeof(held->chunk));
+			held->until_frame = capture->frames + 16;
+			continue;
+		}
+		if (held->buffer) {
+			if (!verify_held_buffer(capture))
+				return;
+			if (valid && chunk->size == sizeof(held->pixels) &&
+					memcmp(held->pixels, image->data, sizeof(held->pixels)))
+				held->saw_different_pixels = true;
+			if (capture->frames >= held->until_frame) {
+				if (!held->saw_different_pixels) {
+					done(capture, "the mock did not publish different pixels");
+					return;
+				}
+				if (pw_stream_queue_buffer(capture->stream, held->buffer) < 0) {
+					done(capture, "could not return the held buffer");
+					return;
+				}
+				held->buffer = NULL;
+				capture->hold_verified = true;
+			}
+		}
 		if (pw_stream_queue_buffer(capture->stream, received) < 0 || !valid) {
 			done(capture, "invalid image or buffer return");
 			return;
 		}
 	}
-	if (!capture->reported && capture->frames >= 16 &&
+	if (!capture->reported && (!capture->verify_hold || capture->hold_verified) &&
+			capture->frames >= 16 &&
 			capture->last_pts - capture->first_pts >= 250 * SPA_NSEC_PER_MSEC) {
-		printf("%s %u %" PRId64 " %" PRId64 "\n", capture->name,
-				capture->frames, capture->first_pts, capture->last_pts);
-		fflush(stdout);
+		report_capture(capture);
 		capture->reported = true;
 	}
 }
@@ -78,6 +158,8 @@ static void stop(void *data, int signum SPA_UNUSED)
 	if (!capture->reported) {
 		fprintf(stderr, "%s: stopped after %u frames\n", capture->name, capture->frames);
 		capture->failed = true;
+	} else {
+		report_capture(capture);
 	}
 	pw_main_loop_quit(capture->loop);
 }
@@ -107,6 +189,7 @@ int main(int argc, char **argv)
 	if (!capture.loop)
 		return 1;
 	capture.name = argv[1];
+	capture.verify_hold = getenv("IRIS_SPA_TEST_HELD_BUFFER") != NULL;
 	if (!pw_loop_add_signal(pw_main_loop_get_loop(capture.loop), SIGTERM, stop, &capture)) {
 		pw_main_loop_destroy(capture.loop);
 		return 1;

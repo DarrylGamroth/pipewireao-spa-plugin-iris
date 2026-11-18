@@ -103,6 +103,9 @@ def main():
             "PIPEWIREAO_SPA_PLUGIN_DIR": f"{plugin.parents[1]}:{installed_plugins}",
         }
 
+        if env.get("IRIS_SPA_TEST_HELD_BUFFER"):
+            env["IRIS_MOCK_VARY_PIXELS"] = "1"
+
         if control_cti:
             env.pop("CLP_XML_PATH", None)
             env.pop("CRED2_SIM_HARDWARE_ID", None)
@@ -156,7 +159,6 @@ def main():
                     result = tool("pwao-link", "-w", source, sink)
                     if result.returncode:
                         raise RuntimeError(result.stdout)
-                intervals = []
                 deadline = time.monotonic() + 7
                 with selectors.DefaultSelector() as poll:
                     for process in processes:
@@ -169,18 +171,19 @@ def main():
                             stdout = key.fileobj.readline()
                             if not stdout:
                                 raise RuntimeError(f"capture client exited: {key.data.args}")
-                            name, count, first_pts, last_pts = stdout.split()
-                            print(f"{name}: {count} valid frames")
-                            intervals.append((int(first_pts), int(last_pts)))
                             poll.unregister(key.fileobj)
-                if max(start for start, _ in intervals) >= min(end for _, end in intervals):
-                    raise RuntimeError("the two graph streams did not overlap")
                 for name, serial in paired.items():
                     check_live_controls(name, serial)
+                intervals = []
                 for process in processes:
                     stop(process)
                     if process.returncode:
                         raise RuntimeError(f"capture client exited with status {process.returncode}")
+                    name, count, first_pts, last_pts = process.stdout.readline().split()
+                    print(f"{name}: {count} valid frames")
+                    intervals.append((int(first_pts), int(last_pts)))
+                if max(start for start, _ in intervals) >= min(end for _, end in intervals):
+                    raise RuntimeError("the two graph streams did not overlap")
                 if daemon.poll() is not None:
                     raise RuntimeError("PipeWireAO daemon exited during capture")
                 stop(daemon)

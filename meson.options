@@ -6,3 +6,6 @@ option('test-control-cti', type: 'string', value: '', description: 'Control-only
 option('test-clserial', type: 'string', value: '', description: 'C-RED2 CLSerial simulator library for the paired control test')
 option('test-clprotocol', type: 'string', value: '', description: 'C-RED2 CLProtocol provider library for the paired control test')
 option('test-clprotocol-gentl-config', type: 'string', value: '', description: 'Generic CLProtocol GenTL simulator port assignments')
+
+option('test-held-buffer', type: 'boolean', value: false,
+  description: 'Check dequeued buffer lifetime with poll-driver buffer returns')

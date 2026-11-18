@@ -21,7 +21,6 @@ jobs:
         shell: bash
     env:
       IRIS_DEB: iris-gentl_0.2.4_debian13_amd64.deb
-      PIPEWIREAO_TARBALL: PipeWireAO.v4.0.4.x86_64-linux-gnu.tar.gz
     steps:
       - name: Install build dependencies
         run: |
@@ -36,11 +35,18 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: DarrylGamroth/iris-gentl
-          ref: f8cab7fc205441336049a090b50b074b3cfc569d # v0.2.4
+          ref: 4b59b46496de4ba334f9647b20a98ced9ee3666e
           path: iris-source
           persist-credentials: false
 
-      - name: Install and verify Iris v0.2.4 and PipeWireAO v4.0.4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: DarrylGamroth/PipeWireAO
+          ref: e384d5292bc9b7736b0195b1c5d07752eb6f274b
+          path: pipewireao-source
+          persist-credentials: false
+
+      - name: Install and verify Iris v0.2.4
         run: |
           cd "$RUNNER_TEMP"
           curl --fail --silent --show-error --location --retry 3 --output "$IRIS_DEB" \
@@ -50,12 +56,17 @@ jobs:
           apt-get install -y --no-install-recommends "./$IRIS_DEB"
           test "$(dpkg-query -W -f='${Version}' iris-gentl)" = 0.2.4
 
-          curl --fail --silent --show-error --location --retry 3 --output "$PIPEWIREAO_TARBALL" \
-            "https://github.com/DarrylGamroth/PipeWireAO_jll.jl/releases/download/PipeWireAO-v4.0.4+0/$PIPEWIREAO_TARBALL"
-          printf '%s  %s\n' bbc43785fd5c8bd0c0d5b724ebfc863326b1a2f59b16298df505268fe4c74014 "$PIPEWIREAO_TARBALL" \
-            | sha256sum --strict --check -
-          mkdir "$RUNNER_TEMP/pipewireao"
-          tar -xzf "$PIPEWIREAO_TARBALL" -C "$RUNNER_TEMP/pipewireao"
+      - name: Build PipeWireAO and test buffer returns
+        run: |
+          build="$RUNNER_TEMP/pipewireao-build"
+          meson setup "$build" pipewireao-source --buildtype=release \
+            --prefix="$RUNNER_TEMP/pipewireao" --libdir=lib \
+            -Dauto_features=disabled -Dspa-plugins=enabled -Dsupport=enabled -Dtests=enabled \
+            -Daudioconvert=enabled -Dsession-managers=[] -Dman=disabled -Ddocs=disabled \
+            -Dexamples=disabled -Dsystemd-system-service=disabled
+          meson compile -C "$build"
+          meson test -C "$build" --no-rebuild --print-errorlogs pw-test-row-transport-mix
+          meson install -C "$build" --no-rebuild
 
       - name: Build the in-tree CTI
         run: |
@@ -63,12 +74,12 @@ jobs:
             -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build "$RUNNER_TEMP/iris-mock" --target iris-test-cti --parallel
 
-      - name: Build the plugin and test the mock graph
+      - name: Test scalar and stacked capture and held-buffer lifetime
         run: |
           pipewireao="$RUNNER_TEMP/pipewireao"
           export PKG_CONFIG_PATH="$pipewireao/lib/pkgconfig"
           export LD_LIBRARY_PATH="$pipewireao/lib"
-          meson setup "$RUNNER_TEMP/plugin" -Dwerror=true \
+          meson setup "$RUNNER_TEMP/plugin" -Dwerror=true -Dtest-held-buffer=true \
             -Diris-prefix=/usr -Diris-libdir=/usr/lib/x86_64-linux-gnu \
             -Dtest-mock-cti="$RUNNER_TEMP/iris-mock/iris-test-cti.cti" \
             -Dtest-pipewireao-bindir="$pipewireao/bin"
