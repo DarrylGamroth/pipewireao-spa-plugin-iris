@@ -4,29 +4,68 @@
 and one GenTL data stream through Iris GenTL. Create multiple nodes to use
 multiple devices or producers in one daemon.
 
-## Build and install
+## Install
 
-Install PipeWireAO with its development files and install
-[Iris GenTL v0.2.4](https://github.com/DarrylGamroth/iris-gentl/releases/tag/v0.2.4).
-The Iris packages include the GenApi runtime. The plugin links to the
-installed Iris C library. Install your camera producer and its runtime
-separately.
+Iris SPA v0.1.0 is qualified with [PipeWireAO 4.0.5](https://github.com/DarrylGamroth/PipeWireAO/releases/tag/v4.0.5)
+and [Iris GenTL 0.2.4](https://github.com/DarrylGamroth/iris-gentl/releases/tag/v0.2.4).
+Use PipeWireAO 4.0.5 for its dequeued video buffer lifetime fix. The Iris GenTL
+packages include the GenApi runtime. Install the GenTL producer and any runtime
+libraries it needs separately.
+
+### Install the release on Debian 13 amd64
+
+Download the Iris GenTL Debian 13 package, the PipeWireAO 4.0.5
+[Linux x86-64 tarball](https://github.com/DarrylGamroth/PipeWireAO_jll.jl/releases/tag/PipeWireAO-v4.0.5%2B0),
+and `iris-spa-0.1.0-debian13-amd64.tar.gz` and `SHA256SUMS` from the
+[Iris SPA release](https://github.com/DarrylGamroth/pipewireao-spa-plugin-iris/releases/tag/v0.1.0).
+From the download directory, install Iris GenTL and extract the two tarballs
+into the same directory.
 
 ```sh
-export PKG_CONFIG_PATH=/opt/pipewireao/current/lib/pkgconfig
-meson setup build -Diris-prefix=/path/to/iris/install
+sha256sum --check SHA256SUMS
+sudo apt install ./iris-gentl_0.2.4_debian13_amd64.deb
+pipewireao="$HOME/opt/pipewireao-4.0.5"
+mkdir -p "$pipewireao"
+tar -xzf PipeWireAO.v4.0.5.x86_64-linux-gnu.tar.gz -C "$pipewireao"
+tar -xzf iris-spa-0.1.0-debian13-amd64.tar.gz -C "$pipewireao"
+```
+
+For a daemon started from the extracted PipeWireAO distribution, set these
+paths in the daemon environment and use the same environment for its CLI tools.
+
+```sh
+export PATH="$pipewireao/bin:$PATH"
+export LD_LIBRARY_PATH="$pipewireao/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PIPEWIREAO_MODULE_DIR="$pipewireao/lib/pipewire-ao-0.3"
+export PIPEWIREAO_SPA_PLUGIN_DIR="$pipewireao/lib/spa-ao-0.2"
+export PIPEWIREAO_CONFIG_DIR="$pipewireao/share/pipewire-ao"
+```
+
+Put the edited source configuration in `pipewire.conf.d` under the active
+configuration directory and restart the daemon. The installed
+`lib/spa-ao-0.2/iris/libspa-iris.so` provides the `api.iris.source` factory.
+
+### Build and install from source
+
+Install Meson 1.3 or newer, Ninja, a C compiler, and pkg-config. Use the
+PipeWireAO development files and the Iris GenTL headers and shared library.
+Set `pipewireao` to the PipeWireAO installation directory. From the v0.1.0
+source tree, with the amd64 Iris GenTL `.deb` installed, run
+
+```sh
+export PKG_CONFIG_PATH="$pipewireao/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+meson setup build -Diris-prefix=/usr -Diris-libdir=/usr/lib/x86_64-linux-gnu
 meson compile -C build
 meson test -C build --print-errorlogs
 meson install -C build
 ```
 
-For the Ubuntu or Debian `.deb`, configure with `-Diris-prefix=/usr` and
-`-Diris-libdir=/usr/lib/x86_64-linux-gnu`. For the relocatable tarball, point
-`-Diris-prefix` at the extracted directory. Meson installs the plugin as `iris/libspa-iris.so` below the
-SPA plugin directory reported by PipeWireAO. Make Iris, GenApi, and producer
-runtime libraries visible to the daemon's dynamic loader. When running from the
-build tree, prepend `$PWD/build/spa/plugins` to `PIPEWIREAO_SPA_PLUGIN_DIR`
-and include the installed PipeWireAO SPA directory in the same variable.
+For a relocatable Iris GenTL installation, set `-Diris-prefix` to the extracted
+directory and omit `-Diris-libdir` if the library is in its `lib` directory.
+Make that library directory visible to the daemon's dynamic loader. Meson
+installs `iris/libspa-iris.so` under the directory reported by
+`pkg-config --variable=plugindir libspa-ao-0.2`. To try the plugin from the
+build tree, prepend `$PWD/build/spa/plugins` to `PIPEWIREAO_SPA_PLUGIN_DIR`.
 
 ## Configure a source
 
@@ -128,12 +167,17 @@ streams with automatic and explicit counts on an isolated daemon.
 ```sh
 meson configure build \
   -Dtest-mock-cti=/path/to/iris/build/iris-test-cti.cti \
-  -Dtest-pipewireao-bindir=/opt/pipewireao/current/bin
+  -Dtest-pipewireao-bindir="$pipewireao/bin" \
+  -Dtest-held-buffer=true
 meson test -C build --print-errorlogs
+IRIS_MOCK_STACKED_INFO=1 meson test -C build --print-errorlogs
 ```
 
 GitHub CI runs the factory, acquisition restart, and daemon graph checks on
-Debian 13 with the Iris v0.2.4 package and PipeWireAO v4.0.4.
+Debian 13 with Iris GenTL 0.2.4 and PipeWireAO 4.0.5. The held-buffer check
+keeps a dequeued buffer through 16 subsequent frames and verifies that its
+pixels and metadata stay unchanged. The two commands exercise scalar and
+stacked GenTL buffer queries.
 
 The daemon test gets its base configuration from the install tree or from
 `PIPEWIREAO_CONFIG_DIR` when set.
