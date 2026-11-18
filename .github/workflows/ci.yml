@@ -63,7 +63,7 @@ jobs:
             --prefix="$RUNNER_TEMP/pipewireao" --libdir=lib \
             -Dauto_features=disabled -Dspa-plugins=enabled -Dsupport=enabled -Dtests=enabled \
             -Daudioconvert=enabled -Dsession-managers=[] -Dman=disabled -Ddocs=disabled \
-            -Dexamples=disabled -Dsystemd-system-service=disabled
+            -Dexamples=disabled -Dflatpak=disabled -Dsystemd-system-service=disabled
           meson compile -C "$build"
           meson test -C "$build" --no-rebuild --print-errorlogs pw-test-row-transport-mix
           meson install -C "$build" --no-rebuild
