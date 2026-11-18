@@ -110,7 +110,9 @@ static void open_capture(struct capture *capture, const struct spa_handle_factor
 			SPA_PARAM_Format, 0, 1, NULL) == 0);
 	CHECK(spa_node_port_enum_params(node, 0, SPA_DIRECTION_OUTPUT, 0,
 			SPA_PARAM_Buffers, 0, 1, NULL) == 0);
+	CHECK(spa_node_port_set_param(node, SPA_DIRECTION_INPUT, 0, SPA_PARAM_Format, 0, NULL) == -EINVAL);
 	CHECK(spa_node_port_set_param(node, SPA_DIRECTION_OUTPUT, 0, SPA_PARAM_Props, 0, NULL) == -ENOENT);
+	CHECK(spa_node_port_use_buffers(node, SPA_DIRECTION_OUTPUT, 0, 0, NULL, 1) == -EINVAL);
 	CHECK(spa_node_port_set_io(node, SPA_DIRECTION_OUTPUT, 0, SPA_IO_Clock, NULL, 0) == -ENOENT);
 	CHECK(spa_node_port_set_io(node, SPA_DIRECTION_OUTPUT, 0, SPA_IO_Buffers,
 			&capture->io, sizeof(capture->io) - 1) == -EINVAL);
@@ -436,6 +438,13 @@ static void test_camera_properties(const struct spa_handle_factory *factory, con
 	CHECK(setenv("IRIS_FAULT", "nodes", 1) == 0);
 	const struct spa_dict discovery = SPA_DICT_INIT(items, 1);
 	check_control_init_failure(factory, &discovery, -ENOTUNIQ);
+	const struct spa_dict_item no_layout_items[] = {
+		{ "api.iris.producer", producer },
+		{ "api.iris.interface-id", "test-interface" },
+		{ "api.iris.device-id", "test-device" },
+	};
+	const struct spa_dict no_layout = SPA_DICT_INIT_ARRAY(no_layout_items);
+	check_control_init_failure(factory, &no_layout, -ENOENT);
 	CHECK(setenv("IRIS_FAULT", "progressive-pool", 1) == 0);
 
 	items[1] = SPA_DICT_ITEM_INIT("api.iris.initial-controls", "[ TriggerMode Off ]");

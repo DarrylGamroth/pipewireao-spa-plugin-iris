@@ -82,8 +82,14 @@ static void exercise_controls(iris_node_map_t *map)
 	const struct spa_pod *empty = spa_pod_builder_add_object(&builder,
 			SPA_TYPE_OBJECT_Props, SPA_PARAM_Props, 0);
 	spa_assert_se(iris_controls_set(&controls, SPA_PARAM_Props, 0, empty, NULL) == 0);
+	spa_pod_builder_init(&builder, malformed_pod, sizeof(malformed_pod));
+	const struct spa_pod *mute = spa_pod_builder_add_object(&builder,
+			SPA_TYPE_OBJECT_Props, SPA_PARAM_Props, SPA_PROP_mute, SPA_POD_Bool(true));
+	spa_assert_se(iris_controls_set(&controls, SPA_PARAM_Props, 0, mute, NULL) == 0);
 	spa_assert_se(iris_controls_set(&controls, SPA_PARAM_Props, 0, NULL, NULL) == 0);
 	spa_assert_se(iris_controls_set(&controls, SPA_PARAM_Props, 0, &wrong.pod, NULL) == -EINVAL);
+	spa_assert_se(iris_controls_set(&controls, SPA_PARAM_Format, 0, NULL, NULL) == -ENOENT);
+	spa_assert_se(set_control(&controls, "genicam.NotExposed", &width.pod, 0) == -ENOENT);
 	spa_assert_se(set_control(&controls, "genicam.Width", &reverse.pod, 0) == -EINVAL);
 	spa_assert_se(set_control(&controls, "genicam.ExposureTime", &reverse.pod, 0) == -EINVAL);
 	spa_assert_se(set_control(&controls, "genicam.ReverseX", &wrong.pod, 0) == -EINVAL);
