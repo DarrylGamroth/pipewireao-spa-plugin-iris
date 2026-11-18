@@ -21,6 +21,7 @@ jobs:
         shell: bash
     env:
       IRIS_DEB: iris-gentl_0.2.4_debian13_amd64.deb
+      PIPEWIREAO_TARBALL: PipeWireAO.v4.0.5.x86_64-linux-gnu.tar.gz
     steps:
       - name: Install build dependencies
         run: |
@@ -39,14 +40,7 @@ jobs:
           path: iris-source
           persist-credentials: false
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: DarrylGamroth/PipeWireAO
-          ref: e384d5292bc9b7736b0195b1c5d07752eb6f274b
-          path: pipewireao-source
-          persist-credentials: false
-
-      - name: Install and verify Iris v0.2.4
+      - name: Install and verify Iris v0.2.4 and PipeWireAO v4.0.5
         run: |
           cd "$RUNNER_TEMP"
           curl --fail --silent --show-error --location --retry 3 --output "$IRIS_DEB" \
@@ -56,17 +50,14 @@ jobs:
           apt-get install -y --no-install-recommends "./$IRIS_DEB"
           test "$(dpkg-query -W -f='${Version}' iris-gentl)" = 0.2.4
 
-      - name: Build PipeWireAO and test buffer returns
-        run: |
-          build="$RUNNER_TEMP/pipewireao-build"
-          meson setup "$build" pipewireao-source --buildtype=release \
-            --prefix="$RUNNER_TEMP/pipewireao" --libdir=lib \
-            -Dauto_features=disabled -Dspa-plugins=enabled -Dsupport=enabled -Dtests=enabled \
-            -Daudioconvert=enabled -Dsession-managers=[] -Dman=disabled -Ddocs=disabled \
-            -Dexamples=disabled -Dflatpak=disabled -Dsystemd-system-service=disabled
-          meson compile -C "$build"
-          meson test -C "$build" --no-rebuild --print-errorlogs pw-test-row-transport-mix
-          meson install -C "$build" --no-rebuild
+          curl --fail --silent --show-error --location --retry 3 --output "$PIPEWIREAO_TARBALL" \
+            "https://github.com/DarrylGamroth/PipeWireAO_jll.jl/releases/download/PipeWireAO-v4.0.5+0/$PIPEWIREAO_TARBALL"
+          printf '%s  %s\n' 3ec7fa12811af376adeebb85985b552a13752cdf95a9c1bc6f42aaa2fb4f1828 "$PIPEWIREAO_TARBALL" \
+            | sha256sum --strict --check -
+          mkdir "$RUNNER_TEMP/pipewireao"
+          tar -xzf "$PIPEWIREAO_TARBALL" -C "$RUNNER_TEMP/pipewireao"
+          LD_LIBRARY_PATH="$RUNNER_TEMP/pipewireao/lib" "$RUNNER_TEMP/pipewireao/bin/pipewire-ao" --version \
+            | grep -Fx 'Linked with libpipewire 4.0.5'
 
       - name: Build the in-tree CTI
         run: |

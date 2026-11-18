@@ -82,10 +82,14 @@ if host_bindir != ''
   endif
   if control_cti != ''
     paired_args = control_config == '' ? [] : ['both']
+    paired_env = environment(control_env)
+    if get_option('test-held-buffer')
+      paired_env.set('IRIS_SPA_TEST_HELD_BUFFER', '1')
+    endif
     test('pipewireao-paired-mock-graph', python,
       args: host_args + [control_cti] + paired_args,
       depends: [plugin, host_client],
-      env: environment(control_env),
+      env: paired_env,
       timeout: 30,
     )
   endif
